@@ -626,6 +626,93 @@ export interface WorkOrderComponent {
 
 export type LoadingStatus = 'PLANNED' | 'ACTIVE' | 'COMPLETED' | 'CANCELLED';
 
+// ============================================================
+// Phase 6 — Production Execution & Shop Floor Transactions
+// ============================================================
+
+export type ShiftSessionStatus = 'OPEN' | 'CLOSING' | 'CLOSED';
+
+export interface ShiftSession {
+  id: string;
+  work_order_id: string;
+  parent_batch_id: string;
+  production_stage_id: string;
+  machine_id: string | null;
+  work_center_id: string | null;
+  supervisor_id: string | null;
+  shift: string | null;
+  production_date: string;
+  start_time: string;
+  end_time: string | null;
+  status: ShiftSessionStatus;
+  opened_by: string | null;
+  closed_by: string | null;
+  closed_at: string | null;
+  notes: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface ProductionTransaction {
+  id: string;
+  transaction_number: string;
+  shift_session_id: string | null;
+  parent_batch_id: string;
+  work_order_id: string;
+  production_stage_id: string;
+  machine_id: string | null;
+  input_qty: number;
+  good_qty: number;
+  rejected_qty: number;
+  pending_qty: number;
+  scrap_qty: number;
+  rework_qty: number;
+  unit_of_measure: string;
+  operator_id: string | null;
+  shift: string | null;
+  start_time: string | null;
+  completion_time: string | null;
+  notes: string | null;
+  idempotency_key: string | null;
+  created_at: string;
+}
+
+export interface MaterialConversion {
+  id: string;
+  parent_batch_id: string;
+  work_order_id: string;
+  production_stage_id: string;
+  source_item_id: string;
+  source_item_code: string;
+  source_qty: number;
+  source_unit: string;
+  output_item_id: string | null;
+  output_item_code: string;
+  output_qty: number;
+  output_unit: string;
+  output_type: string;
+  machine_id: string | null;
+  operator_id: string | null;
+  conversion_date: string;
+  notes: string | null;
+  created_at: string;
+}
+
+export type DispositionType = 'REWORK' | 'SCRAP' | 'RETURN_FOR_INSPECTION';
+
+export interface QuantityDisposition {
+  id: string;
+  production_transaction_id: string;
+  parent_batch_id: string;
+  disposition_type: DispositionType;
+  quantity: number;
+  unit_of_measure: string;
+  authorized_by: string | null;
+  reason: string;
+  rework_transaction_id: string | null;
+  created_at: string;
+}
+
 export interface MachineLoading {
   id: string;
   work_order_id: string;
