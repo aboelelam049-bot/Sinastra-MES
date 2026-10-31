@@ -2,7 +2,7 @@ import type { NavItem } from '@/types';
 
 export const NAV_ITEMS: NavItem[] = [
   { key: 'dashboard', label: 'لوحة التحكم', labelEn: 'Dashboard', icon: 'LayoutDashboard' },
-  { key: 'production-planning', label: 'تخطيط الإنتاج', labelEn: 'Production Planning', icon: 'CalendarRange' },
+  { key: 'production-planning', label: 'الخطة ماستر والشهرية', labelEn: 'Master & Monthly Plan', icon: 'CalendarRange' },
   { key: 'work-orders', label: 'أوامر العمل', labelEn: 'Work Orders', icon: 'ClipboardList' },
   { key: 'machine-loading', label: 'تحميل الماكينات', labelEn: 'Machine Loading', icon: 'CalendarClock' },
   { key: 'products-items', label: 'المنتجات والأصناف', labelEn: 'Products & Items', icon: 'Package' },
@@ -14,7 +14,7 @@ export const NAV_ITEMS: NavItem[] = [
   { key: 'work-centers', label: 'مراكز العمل', labelEn: 'Work Centers', icon: 'Factory' },
   { key: 'machines', label: 'الماكينات', labelEn: 'Machines', icon: 'Cog' },
   { key: 'routing', label: 'المسارات وسير العمل', labelEn: 'Routing & Workflow', icon: 'GitBranch' },
-  { key: 'production-execution', label: 'تنفيذ الإنتاج', labelEn: 'Production Execution', icon: 'PlayCircle' },
+  { key: 'production-execution', label: 'تنفيذ الإنتاج و OEE', labelEn: 'Production Execution & OEE', icon: 'PlayCircle' },
   { key: 'quality-control', label: 'مراقبة الجودة', labelEn: 'Quality Control', icon: 'ShieldCheck' },
   { key: 'barcode', label: 'إدارة الباركود', labelEn: 'Barcode Management', icon: 'Barcode' },
   { key: 'parent-batches', label: 'الدفعات الأم', labelEn: 'Parent Batches', icon: 'Layers' },

@@ -1,436 +1,366 @@
-import { useState, useEffect, useCallback, useMemo } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import {
-  PlayCircle, Plus, Loader2, AlertCircle, RefreshCw, Search,
-  ArrowRight, Trash2, Package, Clock, CheckCircle, XCircle,
-  Scissors, ChevronLeft, Activity, ClipboardList, Lock,
+  PlayCircle, Loader2, AlertCircle, RefreshCw, Search,
+  ArrowRight, ArrowLeft, Play, CheckCircle2, ShieldCheck,
+  Warehouse, Trash2, Gauge, AlertTriangle, Clock,
 } from 'lucide-react';
 import { PageHeader } from '@/components/ui/PageHeader';
 import { Badge } from '@/components/ui/Badge';
 import { Button } from '@/components/ui/Button';
 import { EmptyState } from '@/components/ui/EmptyState';
 import { Modal, ConfirmDialog } from '@/components/ui/ConfirmDialog';
-import { Field, Pagination, ITEM_PAGE_SIZE } from './ProductFamiliesPage';
-import { fetchWorkOrders } from '@/lib/planningService';
-import { fetchItems } from '@/lib/masterDataService';
-import { fetchMachines, fetchWorkCenters } from '@/lib/machineService';
-import { fetchRoutingVersions, fetchRoutingStages } from '@/lib/routingService';
 import {
-  fetchOpenSessions, fetchAllSessions, fetchSession, openShiftSession, closeShiftSession,
-  fetchSessionTransactions, fetchBatchTransactions, fetchTransactionsWithRejected,
-  recordProduction, createProductionBatch,
-  fetchConversions, recordConversion,
-  fetchDispositions, recordDisposition,
-  computeSessionSummary,
-  type SessionWithRelations, type TransactionWithRelations, type ConversionWithRelations,
-  type SessionSummary,
-} from '@/lib/productionExecutionService';
+  fetchSimplifiedWorkOrders, fetchWorkOrderDetail, fetchSubWorkOrders,
+  startSubWorkOrder, completeSubWorkOrder, assignSubWorkOrderMachine,
+  setSubWorkOrderQuality, setWorkOrderQuality, transferToWarehouse,
+  fetchScrapRecords, addScrapRecord, computeOee, fetchOeeSnapshot,
+  fetchMesDashboard, fetchAllOeeSnapshots,
+  type SimplifiedWorkOrder, type SubWorkOrderWithRelations,
+  type OeeResult,
+} from '@/lib/mesService';
+import { fetchMachines } from '@/lib/machineService';
+import { fetchDefects } from '@/lib/qualityService';
+import {
+  WO_STATUS_LABELS, WO_STATUS_COLORS,
+  SUB_WO_STATUS_LABELS, SUB_WO_STATUS_COLORS,
+  QUALITY_GATE_LABELS, QUALITY_GATE_COLORS,
+} from '@/lib/statusLabels';
 import type {
-  WorkOrder, ProductModel, ItemMaster, WorkCenter, Machine,
-  RoutingVersion, RoutingStage, ParentBatch, QuantityDisposition,
+  Machine, QualityGateStatus, SubWorkOrder, ScrapRecord,
+  DefectMaster,
 } from '@/types';
-import { WO_STATUS_LABELS, WO_STATUS_COLORS } from '@/lib/statusLabels';
-
-const EXECUTABLE_STATUSES = ['RELEASED', 'IN_PROGRESS'];
-const SESSION_STATUS_COLORS: Record<string, string> = {
-  OPEN: 'bg-emerald-100 text-emerald-700 border-emerald-200',
-  CLOSING: 'bg-amber-100 text-amber-700 border-amber-200',
-  CLOSED: 'bg-slate-100 text-slate-700 border-slate-200',
-};
 
 export function ProductionExecutionPage() {
-  const [tab, setTab] = useState<'dashboard' | 'sessions' | 'rejected'>('dashboard');
-  const [workOrders, setWorkOrders] = useState<(WorkOrder & { model: ProductModel | null })[]>([]);
-  const [sessions, setSessions] = useState<SessionWithRelations[]>([]);
-  const [rejectedTxs, setRejectedTxs] = useState<TransactionWithRelations[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
-  const [detailTarget, setDetailTarget] = useState<SessionWithRelations | null>(null);
-  const [showCreateBatch, setShowCreateBatch] = useState(false);
-  const [showOpenSession, setShowOpenSession] = useState(false);
-
-  const load = useCallback(async () => {
-    setLoading(true);
-    setError(null);
-    try {
-      const [woData, sessData, rejData] = await Promise.all([
-        fetchWorkOrders(undefined, undefined),
-        fetchOpenSessions(),
-        fetchTransactionsWithRejected(),
-      ]);
-      setWorkOrders(woData.filter(w => EXECUTABLE_STATUSES.includes(w.status)));
-      setSessions(sessData);
-      setRejectedTxs(rejData);
-    } catch (err) {
-      setError(err instanceof Error ? err.message : 'حدث خطأ');
-    } finally {
-      setLoading(false);
-    }
-  }, []);
-
-  useEffect(() => { load(); }, [load]);
-
-  if (detailTarget) {
-    return <SessionDetail session={detailTarget} onBack={() => { setDetailTarget(null); load(); }} />;
-  }
-
-  // Dashboard stats
-  const totalPlanned = workOrders.reduce((s, w) => s + w.planned_quantity, 0);
-  const totalActual = workOrders.reduce((s, w) => s + w.actual_quantity, 0);
-  const openSessionCount = sessions.filter(s => s.status === 'OPEN').length;
-  const rejectedCount = rejectedTxs.length;
+  const [tab, setTab] = useState<'orders' | 'dashboard'>('orders');
 
   return (
     <div>
       <PageHeader
-        title="تنفيذ الإنتاج"
-        subtitle="Production Execution — تسجيل الإنتاج الفعلي وإدارة ورديات العمل"
+        title="تنفيذ الإنتاج و OEE"
+        subtitle="Work Orders → Sub Work Orders → Quality Gate → Warehouse → OEE"
       />
-
-      {error && (
-        <div className="mb-4 flex items-center gap-2 text-sm text-red-600 bg-red-50 border border-red-100 rounded-lg px-3 py-2">
-          <AlertCircle className="w-4 h-4" /> {error}
-        </div>
-      )}
-
-      {/* Dashboard stats */}
-      <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 mb-6">
-        <StatBox icon={ClipboardList} label="أوامر العمل النشطة" value={String(workOrders.length)} color="text-blue-600" />
-        <StatBox icon={Activity} label="ورديات مفتوحة" value={String(openSessionCount)} color="text-emerald-600" />
-        <StatBox icon={Package} label="الكمية المخططة" value={String(totalPlanned)} color="text-slate-600" />
-        <StatBox icon={AlertCircle} label="مرفوضات بانتظار التصرف" value={String(rejectedCount)} color="text-red-600" />
+      <div className="flex gap-2 mb-4 bg-white rounded-xl border border-slate-200 shadow-sm p-1 w-fit">
+        <button
+          onClick={() => setTab('orders')}
+          className={`px-4 py-2 text-sm rounded-lg transition-colors ${
+            tab === 'orders' ? 'bg-amber-50 border border-amber-300 text-amber-700 font-medium' : 'text-slate-600 hover:bg-slate-50'
+          }`}
+        >
+          أوامر الشغل
+        </button>
+        <button
+          onClick={() => setTab('dashboard')}
+          className={`px-4 py-2 text-sm rounded-lg transition-colors ${
+            tab === 'dashboard' ? 'bg-amber-50 border border-amber-300 text-amber-700 font-medium' : 'text-slate-600 hover:bg-slate-50'
+          }`}
+        >
+          لوحة OEE
+        </button>
       </div>
-
-      {/* Tabs */}
-      <div className="flex gap-2 mb-4 border-b border-slate-200">
-        <TabBtn active={tab === 'dashboard'} onClick={() => setTab('dashboard')} icon={Activity}>
-          لوحة الإنتاج
-        </TabBtn>
-        <TabBtn active={tab === 'sessions'} onClick={() => setTab('sessions')} icon={Clock}>
-          الورديات النشطة
-        </TabBtn>
-        <TabBtn active={tab === 'rejected'} onClick={() => setTab('rejected')} icon={AlertCircle}>
-          المرفوضات ({rejectedCount})
-        </TabBtn>
-      </div>
-
-      {loading ? (
-        <div className="flex items-center justify-center py-16"><Loader2 className="w-6 h-6 text-amber-600 animate-spin" /></div>
-      ) : tab === 'dashboard' ? (
-        <DashboardTab
-          workOrders={workOrders}
-          totalActual={totalActual}
-          onOpenSession={() => setShowOpenSession(true)}
-          onCreateBatch={() => setShowCreateBatch(true)}
-        />
-      ) : tab === 'sessions' ? (
-        <SessionsTab sessions={sessions} onOpenDetail={setDetailTarget} onOpenSession={() => setShowOpenSession(true)} />
-      ) : (
-        <RejectedTab txs={rejectedTxs} onResolved={load} />
-      )}
-
-      {showOpenSession && (
-        <OpenSessionModal
-          workOrders={workOrders}
-          onClose={() => setShowOpenSession(false)}
-          onCreated={() => { setShowOpenSession(false); load(); }}
-        />
-      )}
-      {showCreateBatch && (
-        <CreateBatchModal
-          workOrders={workOrders}
-          onClose={() => setShowCreateBatch(false)}
-          onCreated={() => { setShowCreateBatch(false); load(); }}
-        />
-      )}
+      {tab === 'orders' ? <WorkOrdersTab /> : <OeeDashboardTab />}
     </div>
   );
 }
 
 // ============================================================
-// Dashboard Tab
+// Work Orders List
 // ============================================================
 
-function DashboardTab({ workOrders, totalActual, onOpenSession, onCreateBatch }: {
-  workOrders: (WorkOrder & { model: ProductModel | null })[];
-  totalActual: number;
-  onOpenSession: () => void;
-  onCreateBatch: () => void;
-}) {
-  return (
-    <div className="space-y-4">
-      <div className="flex flex-wrap gap-2">
-        <Button onClick={onOpenSession}><PlayCircle className="w-4 h-4" /> فتح وردية</Button>
-        <Button variant="secondary" onClick={onCreateBatch}><Plus className="w-4 h-4" /> إنشاء دفعة إنتاج</Button>
-      </div>
-
-      <div className="bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden">
-        <div className="px-4 py-3 border-b border-slate-100">
-          <h4 className="text-sm font-semibold text-slate-700">أوامر العمل القابلة للتنفيذ</h4>
-        </div>
-        {workOrders.length === 0 ? (
-          <EmptyState icon={<ClipboardList className="w-7 h-7" />} title="لا توجد أوامر عمل نشطة"
-            description="أوامر العمل المُعتمدة (Released) أو قيد التنفيذ (In Progress) ستظهر هنا." />
-        ) : (
-          <div className="overflow-x-auto">
-            <table className="w-full text-sm">
-              <thead className="bg-slate-50 border-b border-slate-200">
-                <tr>
-                  <th className="text-right px-4 py-2.5 font-medium text-slate-600">رقم الأمر</th>
-                  <th className="text-right px-4 py-2.5 font-medium text-slate-600">الموديل</th>
-                  <th className="text-right px-4 py-2.5 font-medium text-slate-600">المخططة</th>
-                  <th className="text-right px-4 py-2.5 font-medium text-slate-600">الفعلية</th>
-                  <th className="text-right px-4 py-2.5 font-medium text-slate-600">الحالة</th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-slate-50">
-                {workOrders.map(wo => (
-                  <tr key={wo.id} className="hover:bg-slate-50">
-                    <td className="px-4 py-2.5 font-mono text-xs font-medium text-slate-700" dir="ltr">{wo.wo_number}</td>
-                    <td className="px-4 py-2.5 text-sm text-slate-700">{wo.model?.name ?? '—'}</td>
-                    <td className="px-4 py-2.5 text-sm text-slate-600">{wo.planned_quantity} {wo.unit_of_measure ?? ''}</td>
-                    <td className="px-4 py-2.5 text-sm font-medium text-slate-700">{wo.actual_quantity} {wo.unit_of_measure ?? ''}</td>
-                    <td className="px-4 py-2.5">
-                      <Badge color={WO_STATUS_COLORS[wo.status]} variant="dot">{WO_STATUS_LABELS[wo.status]}</Badge>
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        )}
-      </div>
-    </div>
-  );
-}
-
-// ============================================================
-// Sessions Tab
-// ============================================================
-
-function SessionsTab({ sessions, onOpenDetail, onOpenSession }: {
-  sessions: SessionWithRelations[];
-  onOpenDetail: (s: SessionWithRelations) => void;
-  onOpenSession: () => void;
-}) {
-  if (sessions.length === 0) {
-    return (
-      <div className="bg-white rounded-xl border border-slate-200 shadow-sm">
-        <EmptyState
-          icon={<Clock className="w-7 h-7" />}
-          title="لا توجد ورديات نشطة"
-          description="افتح وردية جديدة لبدء تسجيل الإنتاج. الوردية تربط أمر العمل والدفعة والمرحلة والماكينة والمشرف."
-          action={<Button onClick={onOpenSession}><PlayCircle className="w-4 h-4" /> فتح وردية</Button>}
-        />
-      </div>
-    );
-  }
-  return (
-    <div className="space-y-3">
-      <Button onClick={onOpenSession}><PlayCircle className="w-4 h-4" /> فتح وردية</Button>
-      <div className="space-y-2">
-        {sessions.map(s => (
-          <div
-            key={s.id}
-            className="bg-white rounded-xl border border-slate-200 shadow-sm p-4 hover:shadow-md transition-shadow cursor-pointer"
-            onClick={() => onOpenDetail(s)}
-          >
-            <div className="flex items-center justify-between mb-2">
-              <div className="flex items-center gap-2">
-                <span className="text-sm font-medium text-slate-700">{s.work_order?.wo_number}</span>
-                <span className="text-xs text-slate-400">—</span>
-                <span className="text-sm text-slate-600">{s.parent_batch?.batch_number}</span>
-              </div>
-              <Badge color={SESSION_STATUS_COLORS[s.status]} variant="dot">
-                {s.status === 'OPEN' ? 'مفتوحة' : s.status === 'CLOSING' ? 'جارية الإغلاق' : 'مغلقة'}
-              </Badge>
-            </div>
-            <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 text-xs">
-              <div><span className="text-slate-400">المرحلة:</span> <span className="text-slate-700">{s.production_stage?.stage_name}</span></div>
-              <div><span className="text-slate-400">الماكينة:</span> <span className="text-slate-700">{s.machine?.name ?? '—'}</span></div>
-              <div><span className="text-slate-400">المشرف:</span> <span className="text-slate-700">{s.supervisor?.full_name ?? '—'}</span></div>
-              <div><span className="text-slate-400">الوردية:</span> <span className="text-slate-700">{s.shift ?? '—'}</span></div>
-            </div>
-            <div className="mt-2 text-xs text-slate-400" dir="ltr">
-              {new Date(s.start_time).toLocaleString('en-GB')} — {s.end_time ? new Date(s.end_time).toLocaleString('en-GB') : 'ongoing'}
-            </div>
-          </div>
-        ))}
-      </div>
-    </div>
-  );
-}
-
-// ============================================================
-// Session Detail — production entries, live summary, closing
-// ============================================================
-
-function SessionDetail({ session, onBack }: { session: SessionWithRelations; onBack: () => void }) {
-  const [txs, setTxs] = useState<TransactionWithRelations[]>([]);
-  const [conversions, setConversions] = useState<ConversionWithRelations[]>([]);
+function WorkOrdersTab() {
+  const [orders, setOrders] = useState<SimplifiedWorkOrder[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  const [showEntry, setShowEntry] = useState(false);
-  const [showConversion, setShowConversion] = useState(false);
-  const [closeConfirm, setCloseConfirm] = useState(false);
-  const [closeNotes, setCloseNotes] = useState('');
+  const [search, setSearch] = useState('');
+  const [statusFilter, setStatusFilter] = useState('');
+  const [detailId, setDetailId] = useState<string | null>(null);
 
   const load = useCallback(async () => {
     setLoading(true);
     setError(null);
     try {
-      const [txData, convData] = await Promise.all([
-        fetchSessionTransactions(session.id),
-        fetchConversions(session.parent_batch_id),
-      ]);
-      setTxs(txData);
-      setConversions(convData);
+      setOrders(await fetchSimplifiedWorkOrders(search.trim() || undefined, statusFilter || undefined));
     } catch (err) {
       setError(err instanceof Error ? err.message : 'حدث خطأ');
     } finally {
       setLoading(false);
     }
-  }, [session.id, session.parent_batch_id]);
+  }, [search, statusFilter]);
 
   useEffect(() => { load(); }, [load]);
 
-  const summary = useMemo(() => computeSessionSummary(txs), [txs]);
-  const isOpen = session.status === 'OPEN';
-
-  async function handleClose() {
-    try {
-      await closeShiftSession(session.id, closeNotes.trim() || undefined);
-      setCloseConfirm(false);
-      onBack();
-    } catch (err) {
-      setError(err instanceof Error ? err.message : 'حدث خطأ');
-    }
+  if (detailId) {
+    return <WorkOrderDetail woId={detailId} onBack={() => { setDetailId(null); load(); }} />;
   }
 
   return (
     <div>
-      <div className="flex items-center gap-3 mb-4">
-        <button onClick={onBack} className="p-2 rounded-lg hover:bg-slate-100 text-slate-600">
-          <ArrowRight className="w-5 h-5 rotate-180" />
-        </button>
-        <PageHeader title={session.parent_batch?.batch_number ?? 'وردية'} subtitle={session.work_order?.wo_number} />
-      </div>
-
-      {/* Session info */}
-      <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 mb-4">
-        <InfoBox label="أمر العمل" value={session.work_order?.wo_number ?? '—'} />
-        <InfoBox label="المرحلة" value={session.production_stage?.stage_name ?? '—'} />
-        <InfoBox label="الماكينة" value={session.machine?.name ?? '—'} />
-        <div className="bg-white rounded-xl border border-slate-200 shadow-sm p-3">
-          <p className="text-xs font-medium text-slate-500 mb-0.5">الحالة</p>
-          <Badge color={SESSION_STATUS_COLORS[session.status]} variant="dot">
-            {session.status === 'OPEN' ? 'مفتوحة' : session.status === 'CLOSING' ? 'جارية الإغلاق' : 'مغلقة'}
-          </Badge>
-        </div>
-      </div>
-
-      {/* Live Summary */}
-      <div className="bg-gradient-to-l from-slate-50 to-white rounded-xl border border-slate-200 shadow-sm p-4 mb-4">
-        <h4 className="text-sm font-semibold text-slate-700 mb-3 flex items-center gap-2">
-          <Activity className="w-4 h-4 text-emerald-600" /> ملخص الوردية المباشر
-        </h4>
-        <div className="grid grid-cols-2 sm:grid-cols-5 gap-3">
-          <SummaryStat label="إجمالي المدخل" value={summary.totalInput} color="text-slate-700" />
-          <SummaryStat label="الجيد" value={summary.totalGood} color="text-emerald-600" />
-          <SummaryStat label="المرفوض" value={summary.totalRejected} color="text-red-600" />
-          <SummaryStat label="المعلق" value={summary.totalPending} color="text-amber-600" />
-          <SummaryStat label="عدد الإدخالات" value={summary.entryCount} color="text-blue-600" />
-        </div>
-        {summary.firstEntryTime && (
-          <p className="text-xs text-slate-400 mt-2" dir="ltr">
-            {new Date(summary.firstEntryTime).toLocaleString('en-GB')} → {summary.lastEntryTime ? new Date(summary.lastEntryTime).toLocaleString('en-GB') : '—'}
-          </p>
-        )}
-      </div>
-
       {error && (
         <div className="mb-4 flex items-center gap-2 text-sm text-red-600 bg-red-50 border border-red-100 rounded-lg px-3 py-2">
           <AlertCircle className="w-4 h-4" /> {error}
         </div>
       )}
+      <div className="bg-white rounded-xl border border-slate-200 shadow-sm mb-4 p-3 flex flex-col sm:flex-row gap-3 flex-wrap">
+        <div className="relative flex-1 min-w-[180px]">
+          <Search className="w-4 h-4 text-slate-400 absolute top-1/2 -translate-y-1/2 right-3" />
+          <input value={search} onChange={e => setSearch(e.target.value)}
+            placeholder="بحث برقم أمر الشغل…"
+            className="w-full pr-9 pl-3 py-2 text-sm border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-amber-500" />
+        </div>
+        <select value={statusFilter} onChange={e => setStatusFilter(e.target.value)}
+          className="px-3 py-2 text-sm border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-amber-500">
+          <option value="">كل الحالات</option>
+          {Object.keys(WO_STATUS_LABELS).map(s => <option key={s} value={s}>{WO_STATUS_LABELS[s as keyof typeof WO_STATUS_LABELS]}</option>)}
+        </select>
+        <Button variant="secondary" onClick={load}><RefreshCw className="w-4 h-4" /> تحديث</Button>
+      </div>
 
-      {/* Action buttons */}
-      {isOpen && (
-        <div className="flex flex-wrap gap-2 mb-4">
-          <Button onClick={() => setShowEntry(true)}><Plus className="w-4 h-4" /> تسجيل إنتاج</Button>
-          <Button variant="secondary" onClick={() => setShowConversion(true)}><Scissors className="w-4 h-4" /> تحويل مواد (تقطيع)</Button>
-          <Button variant="secondary" onClick={() => setCloseConfirm(true)}><Lock className="w-4 h-4" /> إغلاق الوردية</Button>
+      {loading ? (
+        <div className="flex items-center justify-center py-16"><Loader2 className="w-6 h-6 text-amber-600 animate-spin" /></div>
+      ) : orders.length === 0 ? (
+        <div className="bg-white rounded-xl border border-slate-200 shadow-sm">
+          <EmptyState icon={<PlayCircle className="w-7 h-7" />} title="لا توجد أوامر شغل"
+            description="أوامر الشغل تُنشأ تلقائيًا عند اعتماد خطة شهرية. اذهب لصفحة الخطة ماستر والشهرية لإنشاء واعتماد خطة." />
+        </div>
+      ) : (
+        <div className="bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden">
+          <table className="w-full text-sm">
+            <thead className="bg-slate-50 border-b border-slate-200">
+              <tr>
+                <th className="text-right px-4 py-3 font-medium text-slate-600">رقم الأمر</th>
+                <th className="text-right px-4 py-3 font-medium text-slate-600">الموديل</th>
+                <th className="text-right px-4 py-3 font-medium text-slate-600">الكمية</th>
+                <th className="text-right px-4 py-3 font-medium text-slate-600 hidden sm:table-cell">المنتج الفعلي</th>
+                <th className="text-right px-4 py-3 font-medium text-slate-600">الحالة</th>
+                <th className="text-right px-4 py-3 font-medium text-slate-600">الجودة</th>
+                <th className="text-right px-4 py-3 font-medium text-slate-600 hidden md:table-cell">المخزن</th>
+                <th className="px-4 py-3"></th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-slate-50">
+              {orders.map(w => (
+                <tr key={w.id} className="hover:bg-slate-50 cursor-pointer transition-colors" onClick={() => setDetailId(w.id)}>
+                  <td className="px-4 py-3 font-mono text-xs font-medium text-slate-700" dir="ltr">{w.wo_number}</td>
+                  <td className="px-4 py-3 text-slate-700">{w.model?.name ?? '—'}</td>
+                  <td className="px-4 py-3 font-medium text-slate-700" dir="ltr">{Number(w.planned_quantity)}</td>
+                  <td className="px-4 py-3 text-slate-600 hidden sm:table-cell" dir="ltr">{Number(w.actual_quantity)}</td>
+                  <td className="px-4 py-3"><Badge color={WO_STATUS_COLORS[w.status as keyof typeof WO_STATUS_COLORS]} variant="dot">{WO_STATUS_LABELS[w.status as keyof typeof WO_STATUS_LABELS]}</Badge></td>
+                  <td className="px-4 py-3"><Badge color={QUALITY_GATE_COLORS[w.quality_status]} variant="dot">{QUALITY_GATE_LABELS[w.quality_status]}</Badge></td>
+                  <td className="px-4 py-3 hidden md:table-cell">
+                    {w.warehouse_transferred
+                      ? <Badge color="bg-cyan-100 text-cyan-700 border-cyan-200">تم النقل</Badge>
+                      : <span className="text-xs text-slate-400">—</span>}
+                  </td>
+                  <td className="px-4 py-3"><ArrowRight className="w-4 h-4 text-slate-300" /></td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
         </div>
       )}
+    </div>
+  );
+}
 
-      {/* Production entries */}
-      <div className="bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden mb-4">
-        <div className="px-4 py-3 border-b border-slate-100">
-          <h4 className="text-sm font-semibold text-slate-700 flex items-center gap-2">
-            <ClipboardList className="w-4 h-4 text-slate-400" /> إدخالات الإنتاج ({txs.length})
-          </h4>
-        </div>
-        {loading ? (
-          <div className="py-8 flex items-center justify-center"><Loader2 className="w-5 h-5 text-amber-600 animate-spin" /></div>
-        ) : txs.length === 0 ? (
-          <div className="px-4 py-8 text-center text-sm text-slate-400">لا توجد إدخالات بعد. اضغط «تسجيل إنتاج» لإضافة أول إدخال.</div>
-        ) : (
-          <div className="overflow-x-auto">
-            <table className="w-full text-sm">
-              <thead className="bg-slate-50 border-b border-slate-200">
-                <tr>
-                  <th className="text-right px-3 py-2.5 font-medium text-slate-600">رقم العملية</th>
-                  <th className="text-right px-3 py-2.5 font-medium text-slate-600">المدخل</th>
-                  <th className="text-right px-3 py-2.5 font-medium text-slate-600">الجيد</th>
-                  <th className="text-right px-3 py-2.5 font-medium text-slate-600">المرفوض</th>
-                  <th className="text-right px-3 py-2.5 font-medium text-slate-600">المعلق</th>
-                  <th className="text-right px-3 py-2.5 font-medium text-slate-600 hidden sm:table-cell">الوقت</th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-slate-50">
-                {txs.map(t => (
-                  <tr key={t.id} className="hover:bg-slate-50">
-                    <td className="px-3 py-2.5 font-mono text-xs text-slate-700" dir="ltr">{t.transaction_number}</td>
-                    <td className="px-3 py-2.5 text-sm text-slate-700">{t.input_qty} {t.unit_of_measure}</td>
-                    <td className="px-3 py-2.5 text-sm font-medium text-emerald-700">{t.good_qty}</td>
-                    <td className="px-3 py-2.5 text-sm text-red-600">{t.rejected_qty > 0 ? t.rejected_qty : '—'}</td>
-                    <td className="px-3 py-2.5 text-sm text-amber-600">{t.pending_qty > 0 ? t.pending_qty : '—'}</td>
-                    <td className="px-3 py-2.5 text-xs text-slate-400 hidden sm:table-cell" dir="ltr">{new Date(t.created_at).toLocaleString('en-GB')}</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
+// ============================================================
+// Work Order Detail (with sub work orders, quality gate, scrap, OEE)
+// ============================================================
+
+function WorkOrderDetail({ woId, onBack }: { woId: string; onBack: () => void }) {
+  const [wo, setWo] = useState<SimplifiedWorkOrder | null>(null);
+  const [subWos, setSubWos] = useState<SubWorkOrderWithRelations[]>([]);
+  const [scrap, setScrap] = useState<ScrapRecord[]>([]);
+  const [oee, setOee] = useState<OeeResult | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+  const [machines, setMachines] = useState<Machine[]>([]);
+  const [defects, setDefects] = useState<DefectMaster[]>([]);
+  const [completeTarget, setCompleteTarget] = useState<SubWorkOrderWithRelations | null>(null);
+  const [scrapTarget, setScrapTarget] = useState<SubWorkOrderWithRelations | null>(null);
+  const [qualityTarget, setQualityTarget] = useState<{ swo: SubWorkOrderWithRelations | null; wo: SimplifiedWorkOrder | null } | null>(null);
+  const [warehouseTarget, setWarehouseTarget] = useState<SimplifiedWorkOrder | null>(null);
+
+  const load = useCallback(async () => {
+    setLoading(true);
+    setError(null);
+    try {
+      const [w, subs, scraps, mc, df] = await Promise.all([
+        fetchWorkOrderDetail(woId),
+        fetchSubWorkOrders(woId),
+        fetchScrapRecords(woId),
+        fetchMachines(),
+        fetchDefects(),
+      ]);
+      setWo(w);
+      setSubWos(subs);
+      setScrap(scraps);
+      setMachines(mc.filter(m => m.is_active));
+      setDefects(df);
+      try { setOee(await computeOee(woId)); } catch { /* OEE optional */ }
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'حدث خطأ');
+    } finally {
+      setLoading(false);
+    }
+  }, [woId]);
+
+  useEffect(() => { load(); }, [load]);
+
+  if (loading) return <div className="flex items-center justify-center py-16"><Loader2 className="w-6 h-6 text-amber-600 animate-spin" /></div>;
+  if (error) return (
+    <div>
+      <button onClick={onBack} className="flex items-center gap-1 text-sm text-slate-600 hover:text-amber-700 mb-3"><ArrowLeft className="w-4 h-4" /> رجوع</button>
+      <div className="mb-4 flex items-center gap-2 text-sm text-red-600 bg-red-50 border border-red-100 rounded-lg px-3 py-2"><AlertCircle className="w-4 h-4" /> {error}</div>
+    </div>
+  );
+  if (!wo) return null;
+
+  const totalGood = subWos.reduce((s, x) => s + Number(x.good_quantity), 0);
+  const totalScrap = subWos.reduce((s, x) => s + Number(x.scrap_quantity), 0);
+  const allSubsDone = subWos.length > 0 && subWos.every(s => s.status === 'COMPLETED');
+
+  return (
+    <div>
+      <button onClick={onBack} className="flex items-center gap-1 text-sm text-slate-600 hover:text-amber-700 mb-3">
+        <ArrowLeft className="w-4 h-4" /> رجوع للقائمة
+      </button>
+
+      {/* Header card */}
+      <div className="bg-white rounded-xl border border-slate-200 shadow-sm p-5 mb-4">
+        <div className="flex items-center justify-between flex-wrap gap-3">
+          <div>
+            <h2 className="text-lg font-semibold text-slate-800 font-mono" dir="ltr">{wo.wo_number}</h2>
+            <p className="text-sm text-slate-500">{wo.model?.name ?? '—'}</p>
           </div>
+          <div className="flex items-center gap-2 flex-wrap">
+            <Badge color={WO_STATUS_COLORS[wo.status as keyof typeof WO_STATUS_COLORS]} variant="dot">{WO_STATUS_LABELS[wo.status as keyof typeof WO_STATUS_LABELS]}</Badge>
+            <Badge color={QUALITY_GATE_COLORS[wo.quality_status]} variant="dot">{QUALITY_GATE_LABELS[wo.quality_status]}</Badge>
+            {wo.warehouse_transferred && <Badge color="bg-cyan-100 text-cyan-700 border-cyan-200">تم النقل للمخزن</Badge>}
+          </div>
+        </div>
+        <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 mt-4">
+          <Stat label="الكمية المخططة" value={Number(wo.planned_quantity).toString()} />
+          <Stat label="المنتج الفعلي" value={totalGood.toString()} color="text-emerald-600" />
+          <Stat label="الإسكراب" value={totalScrap.toString()} color="text-red-600" />
+          <Stat label="أوامر فرعية" value={`${subWos.filter(s => s.status === 'COMPLETED').length}/${subWos.length}`} />
+        </div>
+        {/* Planned vs Actual times */}
+        <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 mt-3 pt-3 border-t border-slate-100">
+          <Stat label="البداية المخططة" value={wo.planned_start_time ? fmt(wo.planned_start_time) : '—'} small />
+          <Stat label="النهاية المخططة" value={wo.planned_end_time ? fmt(wo.planned_end_time) : '—'} small />
+          <Stat label="البداية الفعلية" value={wo.actual_start_time ? fmt(wo.actual_start_time) : '—'} small />
+          <Stat label="النهاية الفعلية" value={wo.actual_end_time ? fmt(wo.actual_end_time) : '—'} small />
+        </div>
+      </div>
+
+      {/* OEE card */}
+      {oee && <OeeCard oee={oee} />}
+
+      {/* Sub Work Orders */}
+      <div className="bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden mb-4">
+        <div className="px-4 py-3 border-b border-slate-100 flex items-center justify-between">
+          <h3 className="text-sm font-semibold text-slate-700">أوامر الشغل الفرعية ({subWos.length})</h3>
+        </div>
+        {subWos.length === 0 ? (
+          <div className="p-8 text-center text-sm text-slate-400">لا توجد أوامر فرعية. تأكد من تعريف مسار تشغيل للموديل.</div>
+        ) : (
+          <table className="w-full text-sm">
+            <thead className="bg-slate-50 border-b border-slate-200">
+              <tr>
+                <th className="text-right px-3 py-2.5 font-medium text-slate-600 w-10">#</th>
+                <th className="text-right px-3 py-2.5 font-medium text-slate-600">المرحلة</th>
+                <th className="text-right px-3 py-2.5 font-medium text-slate-600 hidden sm:table-cell">الماكينة</th>
+                <th className="text-right px-3 py-2.5 font-medium text-slate-600">الكمية</th>
+                <th className="text-right px-3 py-2.5 font-medium text-slate-600 hidden sm:table-cell">الإسكراب</th>
+                <th className="text-right px-3 py-2.5 font-medium text-slate-600">الحالة</th>
+                <th className="text-right px-3 py-2.5 font-medium text-slate-600">الجودة</th>
+                <th className="px-3 py-2.5"></th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-slate-50">
+              {subWos.map((swo) => (
+                <tr key={swo.id} className="hover:bg-slate-50 transition-colors">
+                  <td className="px-3 py-2.5 font-mono text-xs text-slate-500">{swo.sequence_number}</td>
+                  <td className="px-3 py-2.5 font-medium text-slate-700">{swo.stage_name}</td>
+                  <td className="px-3 py-2.5 hidden sm:table-cell">
+                    <select value={swo.machine_id ?? ''} disabled={swo.status === 'COMPLETED'}
+                      onChange={(e) => handleAssignMachine(swo.id, e.target.value || null, load, setError)}
+                      className="text-xs border border-slate-200 rounded px-2 py-1 focus:outline-none focus:ring-1 focus:ring-amber-500 disabled:bg-slate-50">
+                      <option value="">— بدون —</option>
+                      {machines.map(m => <option key={m.id} value={m.id}>{m.name}</option>)}
+                    </select>
+                  </td>
+                  <td className="px-3 py-2.5 text-slate-600" dir="ltr">
+                    {Number(swo.good_quantity)}/{Number(swo.planned_quantity)}
+                  </td>
+                  <td className="px-3 py-2.5 text-red-600 hidden sm:table-cell" dir="ltr">{Number(swo.scrap_quantity)}</td>
+                  <td className="px-3 py-2.5"><Badge color={SUB_WO_STATUS_COLORS[swo.status]} variant="dot">{SUB_WO_STATUS_LABELS[swo.status]}</Badge></td>
+                  <td className="px-3 py-2.5"><Badge color={QUALITY_GATE_COLORS[swo.quality_status]} variant="dot">{QUALITY_GATE_LABELS[swo.quality_status]}</Badge></td>
+                  <td className="px-3 py-2.5">
+                    <div className="flex gap-1 justify-end">
+                      {swo.status === 'PENDING' && (
+                        <button onClick={(e) => { e.stopPropagation(); handleStart(swo.id, load, setError); }}
+                          title="بدء" className="p-1.5 text-emerald-600 hover:bg-emerald-50 rounded"><Play className="w-4 h-4" /></button>
+                      )}
+                      {swo.status === 'IN_PROGRESS' && (
+                        <button onClick={(e) => { e.stopPropagation(); setCompleteTarget(swo); }}
+                          title="إنهاء" className="p-1.5 text-amber-600 hover:bg-amber-50 rounded"><CheckCircle2 className="w-4 h-4" /></button>
+                      )}
+                      {swo.status === 'COMPLETED' && swo.quality_status === 'PENDING' && (
+                        <button onClick={(e) => { e.stopPropagation(); setQualityTarget({ swo, wo: null }); }}
+                          title="قرار الجودة" className="p-1.5 text-blue-600 hover:bg-blue-50 rounded"><ShieldCheck className="w-4 h-4" /></button>
+                      )}
+                      {swo.status === 'COMPLETED' && (
+                        <button onClick={(e) => { e.stopPropagation(); setScrapTarget(swo); }}
+                          title="تسجيل إسكراب" className="p-1.5 text-red-600 hover:bg-red-50 rounded"><Trash2 className="w-4 h-4" /></button>
+                      )}
+                    </div>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
         )}
       </div>
 
-      {/* Material conversions */}
-      {conversions.length > 0 && (
-        <div className="bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden">
+      {/* Quality + Warehouse actions for main work order */}
+      <div className="bg-white rounded-xl border border-slate-200 shadow-sm p-4 mb-4 flex flex-wrap gap-3">
+        {wo.quality_status === 'PENDING' && allSubsDone && (
+          <Button onClick={() => setQualityTarget({ swo: null, wo })}>
+            <ShieldCheck className="w-4 h-4" /> قرار الجودة للأمر الرئيسي
+          </Button>
+        )}
+        {wo.quality_status === 'PASSED' && !wo.warehouse_transferred && (
+          <Button onClick={() => setWarehouseTarget(wo)}>
+            <Warehouse className="w-4 h-4" /> نقل للمخزن
+          </Button>
+        )}
+        <Button variant="secondary" onClick={async () => { try { setOee(await computeOee(woId)); } catch (e) { setError(e instanceof Error ? e.message : 'خطأ'); } }}>
+          <Gauge className="w-4 h-4" /> إعادة حساب OEE
+        </Button>
+      </div>
+
+      {/* Scrap records */}
+      {scrap.length > 0 && (
+        <div className="bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden mb-4">
           <div className="px-4 py-3 border-b border-slate-100">
-            <h4 className="text-sm font-semibold text-slate-700 flex items-center gap-2">
-              <Scissors className="w-4 h-4 text-slate-400" /> تحويلات المواد ({conversions.length})
-            </h4>
+            <h3 className="text-sm font-semibold text-slate-700">سجل الإسكراب ({scrap.length})</h3>
           </div>
           <table className="w-full text-sm">
             <thead className="bg-slate-50 border-b border-slate-200">
               <tr>
-                <th className="text-right px-3 py-2.5 font-medium text-slate-600">المصدر</th>
-                <th className="text-right px-3 py-2.5 font-medium text-slate-600">الكمية</th>
-                <th className="text-right px-3 py-2.5 font-medium text-slate-600">المخرج</th>
-                <th className="text-right px-3 py-2.5 font-medium text-slate-600">النوع</th>
+                <th className="text-right px-4 py-2 font-medium text-slate-600">الكمية</th>
+                <th className="text-right px-4 py-2 font-medium text-slate-600">نوع العيب</th>
+                <th className="text-right px-4 py-2 font-medium text-slate-600">السبب</th>
+                <th className="text-right px-4 py-2 font-medium text-slate-600">الوقت</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-50">
-              {conversions.map(c => (
-                <tr key={c.id} className="hover:bg-slate-50">
-                  <td className="px-3 py-2.5 text-xs text-slate-700">{c.source_item?.name}</td>
-                  <td className="px-3 py-2.5 text-xs text-slate-600">{c.source_qty} {c.source_unit}</td>
-                  <td className="px-3 py-2.5 text-xs text-slate-700">{c.output_item?.name ?? c.output_item_code}</td>
-                  <td className="px-3 py-2.5">
-                    <Badge color="bg-blue-50 text-blue-600 border-blue-100" >
-                      {c.output_type === 'LENGTH_STRIP' ? 'طول' : c.output_type === 'FRONT_BACK_STRIP' ? 'وش/ظهر' : c.output_type === 'WASTE' ? 'هدر' : 'متبقي'}
-                    </Badge>
-                  </td>
+              {scrap.map(r => (
+                <tr key={r.id} className="hover:bg-slate-50">
+                  <td className="px-4 py-2 font-medium text-red-600" dir="ltr">{Number(r.quantity)}</td>
+                  <td className="px-4 py-2 text-slate-600">{r.defect_code ?? '—'}</td>
+                  <td className="px-4 py-2 text-slate-600 text-xs">{r.reason ?? '—'}</td>
+                  <td className="px-4 py-2 text-xs text-slate-400" dir="ltr">{fmt(r.recorded_at)}</td>
                 </tr>
               ))}
             </tbody>
@@ -438,383 +368,84 @@ function SessionDetail({ session, onBack }: { session: SessionWithRelations; onB
         </div>
       )}
 
-      {showEntry && (
-        <ProductionEntryModal
-          session={session}
-          onClose={() => setShowEntry(false)}
-          onSaved={() => { setShowEntry(false); load(); }}
-        />
+      {/* Modals */}
+      {completeTarget && (
+        <CompleteModal swo={completeTarget} onClose={() => setCompleteTarget(null)} onDone={() => { setCompleteTarget(null); load(); }} />
       )}
-      {showConversion && (
-        <ConversionModal
-          session={session}
-          onClose={() => setShowConversion(false)}
-          onSaved={() => { setShowConversion(false); load(); }}
-        />
+      {scrapTarget && (
+        <ScrapModal swo={scrapTarget} defects={defects} woId={woId} onClose={() => setScrapTarget(null)} onDone={() => { setScrapTarget(null); load(); }} />
       )}
-      <ConfirmDialog
-        open={closeConfirm}
-        title="إغلاق الوردية"
-        message="بعد الإغلاق لن يمكن إضافة إدخالات جديدة. سيتم الحفاظ على سجل الإدخالات كما هو."
-        confirmLabel="إغلاق"
-        variant="danger"
-        onConfirm={handleClose}
-        onCancel={() => setCloseConfirm(false)}
-      />
+      {qualityTarget && (
+        <QualityModal target={qualityTarget} onClose={() => setQualityTarget(null)} onDone={() => { setQualityTarget(null); load(); }} />
+      )}
+      {warehouseTarget && (
+        <ConfirmDialog open title="نقل للمخزن"
+          message={`سيتم نقل كمية "${Number(wo.actual_quantity)}" للمخزن. لا يمكن التراجع.`}
+          confirmLabel="نقل للمخزن"
+          onConfirm={async () => {
+            try { await transferToWarehouse(warehouseTarget.id); setWarehouseTarget(null); load(); }
+            catch (e) { setError(e instanceof Error ? e.message : 'خطأ'); setWarehouseTarget(null); }
+          }}
+          onCancel={() => setWarehouseTarget(null)} />
+      )}
     </div>
   );
 }
 
-// ============================================================
-// Production Entry Modal
-// ============================================================
-
-function ProductionEntryModal({ session, onClose, onSaved }: {
-  session: SessionWithRelations;
-  onClose: () => void;
-  onSaved: () => void;
-}) {
-  const [machines, setMachines] = useState<Machine[]>([]);
-  const [inputQty, setInputQty] = useState('');
-  const [goodQty, setGoodQty] = useState('');
-  const [rejectedQty, setRejectedQty] = useState('0');
-  const [pendingQty, setPendingQty] = useState('0');
-  const [notes, setNotes] = useState('');
-  const [loading, setLoading] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-
-  useEffect(() => {
-    (async () => {
-      try {
-        const data = await fetchMachines(undefined, undefined, undefined, true);
-        setMachines(data);
-      } catch { /* ignore */ }
-    })();
-  }, []);
-
-  const inp = parseFloat(inputQty) || 0;
-  const good = parseFloat(goodQty) || 0;
-  const rej = parseFloat(rejectedQty) || 0;
-  const pend = parseFloat(pendingQty) || 0;
-  const reconciled = inp === good + rej + pend;
-  const valid = inp > 0 && good >= 0 && rej >= 0 && pend >= 0 && reconciled;
-
-  async function handleSubmit(e: React.FormEvent) {
-    e.preventDefault();
-    if (!valid) { setError('مطابقة الكميات غير صحيحة: المدخل يجب أن يساوي الجيد + المرفوض + المعلق'); return; }
-    setLoading(true);
-    setError(null);
-    try {
-      await recordProduction({
-        shift_session_id: session.id,
-        machine_id: session.machine_id ?? undefined,
-        input_qty: inp,
-        good_qty: good,
-        rejected_qty: rej,
-        pending_qty: pend,
-        unit_of_measure: session.work_order?.unit_of_measure ?? 'PCS',
-        shift: session.shift ?? undefined,
-        notes: notes.trim() || undefined,
-        idempotency_key: `${session.id}-${Date.now()}`,
-      });
-      onSaved();
-    } catch (err) {
-      setError(err instanceof Error ? err.message : 'حدث خطأ');
-    } finally {
-      setLoading(false);
-    }
-  }
-
+function Stat({ label, value, color, small }: { label: string; value: string; color?: string; small?: boolean }) {
   return (
-    <Modal open title="تسجيل إنتاج" onClose={onClose} maxWidth="max-w-lg">
-      <form onSubmit={handleSubmit} className="space-y-4">
-        <div className="bg-slate-50 rounded-lg px-3 py-2 text-sm text-slate-600 space-y-1">
-          <div className="flex justify-between"><span>أمر العمل:</span> <span className="font-mono font-medium" dir="ltr">{session.work_order?.wo_number}</span></div>
-          <div className="flex justify-between"><span>الدفعة:</span> <span className="font-mono" dir="ltr">{session.parent_batch?.batch_number}</span></div>
-          <div className="flex justify-between"><span>المرحلة:</span> <span>{session.production_stage?.stage_name}</span></div>
-        </div>
-
-        <Field label="الكمية المدخلة">
-          <input type="number" min="0.01" step="0.01" value={inputQty}
-            onChange={e => setInputQty(e.target.value)} required
-            className="w-full px-3 py-2.5 text-sm border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-amber-500" />
-        </Field>
-        <div className="grid grid-cols-3 gap-3">
-          <Field label="الجيد">
-            <input type="number" min="0" step="0.01" value={goodQty}
-              onChange={e => setGoodQty(e.target.value)} required
-              className={`w-full px-3 py-2.5 text-sm border rounded-lg focus:outline-none focus:ring-2 ${reconciled ? 'border-slate-300 focus:ring-emerald-500' : 'border-red-300 focus:ring-red-500'}`} />
-          </Field>
-          <Field label="المرفوض">
-            <input type="number" min="0" step="0.01" value={rejectedQty}
-              onChange={e => setRejectedQty(e.target.value)} required
-              className="w-full px-3 py-2.5 text-sm border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-red-500" />
-          </Field>
-          <Field label="المعلق">
-            <input type="number" min="0" step="0.01" value={pendingQty}
-              onChange={e => setPendingQty(e.target.value)} required
-              className="w-full px-3 py-2.5 text-sm border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-amber-500" />
-          </Field>
-        </div>
-
-        <div className={`text-sm rounded-lg px-3 py-2 ${reconciled ? 'bg-emerald-50 text-emerald-700' : 'bg-red-50 text-red-600'}`}>
-          {reconciled ? `مطابق: ${inp} = ${good} + ${rej} + ${pend}` : `غير مطابق: ${inp} ≠ ${good} + ${rej} + ${pend} (= ${good + rej + pend})`}
-        </div>
-
-        <Field label="ملاحظات">
-          <textarea value={notes} onChange={e => setNotes(e.target.value)} rows={2}
-            className="w-full px-3 py-2.5 text-sm border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-amber-500" />
-        </Field>
-
-        {error && <div className="text-sm text-red-600 bg-red-50 border border-red-100 rounded-lg px-3 py-2">{error}</div>}
-        <div className="flex gap-2 pt-1">
-          <Button type="submit" disabled={loading || !valid}>
-            {loading ? <Loader2 className="w-4 h-4 animate-spin" /> : <CheckCircle className="w-4 h-4" />}
-            تأكيد الإنتاج
-          </Button>
-          <Button type="button" variant="secondary" onClick={onClose}>إلغاء</Button>
-        </div>
-      </form>
-    </Modal>
+    <div>
+      <div className={`text-xs text-slate-500 ${small ? 'mb-0.5' : 'mb-1'}`}>{label}</div>
+      <div className={`${small ? 'text-sm' : 'text-lg font-semibold'} ${color ?? 'text-slate-800'}`} dir="ltr">{value}</div>
+    </div>
   );
 }
 
-// ============================================================
-// Material Conversion Modal (Initial Cutting)
-// ============================================================
-
-function ConversionModal({ session, onClose, onSaved }: {
-  session: SessionWithRelations;
-  onClose: () => void;
-  onSaved: () => void;
-}) {
-  const [items, setItems] = useState<ItemMaster[]>([]);
-  const [search, setSearch] = useState('');
-  const [sourceItemId, setSourceItemId] = useState('');
-  const [sourceQty, setSourceQty] = useState('1');
-  const [sourceUnit, setSourceUnit] = useState('BOARD');
-  const [outputItemId, setOutputItemId] = useState('');
-  const [outputQty, setOutputQty] = useState('1');
-  const [outputUnit, setOutputUnit] = useState('PCS');
-  const [outputType, setOutputType] = useState('LENGTH_STRIP');
-  const [notes, setNotes] = useState('');
-  const [loading, setLoading] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-
-  useEffect(() => {
-    (async () => {
-      try {
-        const data = await fetchItems(search.trim() || undefined, undefined, true);
-        setItems(data);
-      } catch { /* ignore */ }
-    })();
-  }, [search]);
-
-  async function handleSubmit(e: React.FormEvent) {
-    e.preventDefault();
-    setLoading(true);
-    setError(null);
-    try {
-      const sourceItem = items.find(i => i.id === sourceItemId);
-      if (!sourceItem) throw new Error('اختر صنف المصدر');
-      const outputItem = items.find(i => i.id === outputItemId);
-      await recordConversion({
-        parent_batch_id: session.parent_batch_id,
-        work_order_id: session.work_order_id,
-        production_stage_id: session.production_stage_id,
-        source_item_id: sourceItem.id,
-        source_item_code: sourceItem.item_code,
-        source_qty: parseFloat(sourceQty),
-        source_unit: sourceUnit,
-        output_item_id: outputItemId || undefined,
-        output_item_code: outputItem?.item_code ?? '',
-        output_qty: parseFloat(outputQty),
-        output_unit: outputUnit,
-        output_type: outputType,
-        machine_id: session.machine_id ?? undefined,
-        notes: notes.trim() || undefined,
-      });
-      onSaved();
-    } catch (err) {
-      setError(err instanceof Error ? err.message : 'حدث خطأ');
-    } finally {
-      setLoading(false);
-    }
-  }
-
+function OeeCard({ oee }: { oee: OeeResult }) {
+  const pct = (v: number) => Math.round(v * 100) + '%';
+  const oeeColor = oee.oee >= 0.85 ? 'text-emerald-600' : oee.oee >= 0.6 ? 'text-amber-600' : 'text-red-600';
   return (
-    <Modal open title="تحويل مواد — تقطيع أولي" onClose={onClose} maxWidth="max-w-2xl">
-      <form onSubmit={handleSubmit} className="space-y-4">
-        <div className="bg-blue-50 rounded-lg px-3 py-2 text-sm text-blue-700">
-          سجّل تحويل المواد الخام (ألواح) إلى مخرجات (أطوال / أوجه / ظهور). كل تحويل يحافظ على سلسلة المواد.
+    <div className="bg-white rounded-xl border border-slate-200 shadow-sm p-5 mb-4">
+      <h3 className="text-sm font-semibold text-slate-700 mb-3 flex items-center gap-1"><Gauge className="w-4 h-4" /> OEE — كفاءة الأداء الكلية</h3>
+      <div className="grid grid-cols-4 gap-3">
+        <div className="text-center">
+          <div className="text-xs text-slate-500 mb-1">الإتاحة</div>
+          <div className="text-xl font-bold text-blue-600" dir="ltr">{pct(oee.availability)}</div>
         </div>
-
-        <input value={search} onChange={e => setSearch(e.target.value)} placeholder="بحث عن صنف…"
-          className="w-full px-3 py-2 text-sm border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-amber-500" />
-
-        <Field label="الصنف المصدر (اللوح الخام)">
-          <select value={sourceItemId} onChange={e => setSourceItemId(e.target.value)} required
-            className="w-full px-3 py-2.5 text-sm border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-amber-500">
-            <option value="">اختر صنف</option>
-            {items.map(i => <option key={i.id} value={i.id}>{i.name} ({i.item_code})</option>)}
-          </select>
-        </Field>
-
-        <div className="grid grid-cols-2 gap-3">
-          <Field label="كمية المصدر">
-            <input type="number" min="0.01" step="0.01" value={sourceQty} onChange={e => setSourceQty(e.target.value)} required
-              className="w-full px-3 py-2.5 text-sm border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-amber-500" />
-          </Field>
-          <Field label="وحدة المصدر">
-            <input value={sourceUnit} onChange={e => setSourceUnit(e.target.value)} required dir="ltr"
-              className="w-full px-3 py-2.5 text-sm border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-amber-500" />
-          </Field>
+        <div className="text-center">
+          <div className="text-xs text-slate-500 mb-1">الأداء</div>
+          <div className="text-xl font-bold text-amber-600" dir="ltr">{pct(oee.performance)}</div>
         </div>
-
-        <div className="border-t border-slate-200 pt-3">
-          <h5 className="text-xs font-semibold text-slate-600 mb-2">المخرجات</h5>
-          <Field label="صنف المخرج (اختياري)">
-            <select value={outputItemId} onChange={e => setOutputItemId(e.target.value)}
-              className="w-full px-3 py-2.5 text-sm border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-amber-500">
-              <option value="">—</option>
-              {items.filter(i => i.id !== sourceItemId).map(i => <option key={i.id} value={i.id}>{i.name} ({i.item_code})</option>)}
-            </select>
-          </Field>
-          <div className="grid grid-cols-3 gap-3">
-            <Field label="كمية المخرج">
-              <input type="number" min="0" step="0.01" value={outputQty} onChange={e => setOutputQty(e.target.value)} required
-                className="w-full px-3 py-2.5 text-sm border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-amber-500" />
-            </Field>
-            <Field label="الوحدة">
-              <input value={outputUnit} onChange={e => setOutputUnit(e.target.value)} required dir="ltr"
-                className="w-full px-3 py-2.5 text-sm border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-amber-500" />
-            </Field>
-            <Field label="نوع المخرج">
-              <select value={outputType} onChange={e => setOutputType(e.target.value)}
-                className="w-full px-3 py-2.5 text-sm border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-amber-500">
-                <option value="LENGTH_STRIP">طول (Length Strip)</option>
-                <option value="FRONT_BACK_STRIP">وش / ظهر (Front/Back Strip)</option>
-                <option value="WASTE">هدر (Waste)</option>
-                <option value="LEFTOVER">متبقي (Leftover)</option>
-              </select>
-            </Field>
-          </div>
+        <div className="text-center">
+          <div className="text-xs text-slate-500 mb-1">الجودة</div>
+          <div className="text-xl font-bold text-emerald-600" dir="ltr">{pct(oee.quality)}</div>
         </div>
-
-        <Field label="ملاحظات">
-          <textarea value={notes} onChange={e => setNotes(e.target.value)} rows={2}
-            className="w-full px-3 py-2.5 text-sm border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-amber-500" />
-        </Field>
-
-        {error && <div className="text-sm text-red-600 bg-red-50 border border-red-100 rounded-lg px-3 py-2">{error}</div>}
-        <div className="flex gap-2 pt-1">
-          <Button type="submit" disabled={loading || !sourceItemId}>
-            {loading ? <Loader2 className="w-4 h-4 animate-spin" /> : <Scissors className="w-4 h-4" />}
-            تسجيل التحويل
-          </Button>
-          <Button type="button" variant="secondary" onClick={onClose}>إلغاء</Button>
+        <div className="text-center border-r border-slate-100 pr-3">
+          <div className="text-xs text-slate-500 mb-1">OEE</div>
+          <div className={`text-2xl font-bold ${oeeColor}`} dir="ltr">{pct(oee.oee)}</div>
         </div>
-      </form>
-    </Modal>
-  );
-}
-
-// ============================================================
-// Rejected Tab — quality dispositions
-// ============================================================
-
-function RejectedTab({ txs, onResolved }: { txs: TransactionWithRelations[]; onResolved: () => void }) {
-  const [dispositions, setDispositions] = useState<Record<string, QuantityDisposition[]>>({});
-  const [showDisp, setShowDisp] = useState<TransactionWithRelations | null>(null);
-
-  const loadDispositions = useCallback(async () => {
-    const allDisps: Record<string, QuantityDisposition[]> = {};
-    for (const tx of txs) {
-      try {
-        const d = await fetchDispositions(tx.id);
-        if (d.length > 0) allDisps[tx.id] = d;
-      } catch { /* ignore */ }
-    }
-    setDispositions(allDisps);
-  }, [txs]);
-
-  useEffect(() => { loadDispositions(); }, [loadDispositions]);
-
-  if (txs.length === 0) {
-    return (
-      <div className="bg-white rounded-xl border border-slate-200 shadow-sm">
-        <EmptyState icon={<CheckCircle className="w-7 h-7" />} title="لا توجد مرفوضات"
-          description="لا توجد كميات مرفوضة بانتظار التصرف. سيتم عرض الكميات المرفوضة من عمليات الإنتاج هنا." />
       </div>
-    );
-  }
-
-  return (
-    <div className="space-y-3">
-      {txs.map(tx => {
-        const disps = dispositions[tx.id] ?? [];
-        const remainingRejected = tx.rejected_qty - disps.reduce((s, d) => s + d.quantity, 0);
-        return (
-          <div key={tx.id} className="bg-white rounded-xl border border-slate-200 shadow-sm p-4">
-            <div className="flex items-center justify-between mb-2">
-              <div>
-                <span className="font-mono text-xs text-slate-700" dir="ltr">{tx.transaction_number}</span>
-                <span className="text-sm text-slate-600 mr-2">— {tx.production_stage?.stage_name}</span>
-              </div>
-              <Badge color={remainingRejected > 0 ? 'bg-red-100 text-red-700 border-red-200' : 'bg-emerald-100 text-emerald-700 border-emerald-200'}>
-                {remainingRejected > 0 ? `${remainingRejected} بانتظار التصرف` : 'تم التصرف'}
-              </Badge>
-            </div>
-            <div className="text-xs text-slate-500 mb-2">
-              الكمية المرفوضة: {tx.rejected_qty} {tx.unit_of_measure}
-            </div>
-            {disps.length > 0 && (
-              <div className="space-y-1 mb-2">
-                {disps.map(d => (
-                  <div key={d.id} className="text-xs flex items-center gap-2">
-                    <Badge color={
-                      d.disposition_type === 'SCRAP' ? 'bg-red-50 text-red-600 border-red-100' :
-                      d.disposition_type === 'REWORK' ? 'bg-amber-50 text-amber-600 border-amber-100' :
-                      'bg-blue-50 text-blue-600 border-blue-100'
-                    }>
-                      {d.disposition_type === 'SCRAP' ? 'هدر' : d.disposition_type === 'REWORK' ? 'إعادة عمل' : 'إعادة فحص'}
-                    </Badge>
-                    <span className="text-slate-600">{d.quantity} {d.unit_of_measure}</span>
-                    <span className="text-slate-400">— {d.reason}</span>
-                  </div>
-                ))}
-              </div>
-            )}
-            {remainingRejected > 0 && (
-              <Button size="sm" variant="secondary" onClick={() => setShowDisp(tx)}>
-                <Plus className="w-3.5 h-3.5" /> تسجيل تصرف
-              </Button>
-            )}
-          </div>
-        );
-      })}
-      {showDisp && (
-        <DispositionModal
-          tx={showDisp}
-          onClose={() => setShowDisp(null)}
-          onSaved={() => { setShowDisp(null); onResolved(); }}
-        />
-      )}
+      <div className="flex justify-between mt-3 pt-3 border-t border-slate-100 text-xs text-slate-500">
+        <span>زمن مخطط: {Math.round(oee.planned_minutes)} د</span>
+        <span>زمن فعلي: {Math.round(oee.actual_minutes)} د</span>
+        <span>منتج جيد: {Math.round(oee.good_qty)} / {Math.round(oee.total_qty)}</span>
+      </div>
     </div>
   );
 }
 
 // ============================================================
-// Disposition Modal
+// Complete Modal
 // ============================================================
 
-function DispositionModal({ tx, onClose, onSaved }: {
-  tx: TransactionWithRelations;
+function CompleteModal({ swo, onClose, onDone }: {
+  swo: SubWorkOrderWithRelations;
   onClose: () => void;
-  onSaved: () => void;
+  onDone: () => void;
 }) {
-  const [type, setType] = useState<'REWORK' | 'SCRAP' | 'RETURN_FOR_INSPECTION'>('SCRAP');
-  const [qty, setQty] = useState(String(tx.rejected_qty));
+  const [good, setGood] = useState(String(swo.planned_quantity));
+  const [scrap, setScrap] = useState('0');
+  const [reject, setReject] = useState('0');
   const [reason, setReason] = useState('');
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -824,15 +455,14 @@ function DispositionModal({ tx, onClose, onSaved }: {
     setLoading(true);
     setError(null);
     try {
-      await recordDisposition({
-        production_transaction_id: tx.id,
-        parent_batch_id: tx.parent_batch_id,
-        disposition_type: type,
-        quantity: parseFloat(qty),
-        unit_of_measure: tx.unit_of_measure,
-        reason: reason.trim(),
+      await completeSubWorkOrder({
+        sub_wo_id: swo.id,
+        good_qty: Number(good),
+        scrap_qty: Number(scrap),
+        reject_qty: Number(reject),
+        reason: reason || undefined,
       });
-      onSaved();
+      onDone();
     } catch (err) {
       setError(err instanceof Error ? err.message : 'حدث خطأ');
     } finally {
@@ -841,239 +471,35 @@ function DispositionModal({ tx, onClose, onSaved }: {
   }
 
   return (
-    <Modal open title="تسجيل تصرف في الكمية المرفوضة" onClose={onClose}>
+    <Modal open title={`إنهاء: ${swo.stage_name}`} onClose={onClose} maxWidth="max-w-md">
       <form onSubmit={handleSubmit} className="space-y-4">
-        <div className="bg-slate-50 rounded-lg px-3 py-2 text-sm text-slate-600">
-          العملية: <span className="font-mono" dir="ltr">{tx.transaction_number}</span> — الكمية المرفوضة: {tx.rejected_qty} {tx.unit_of_measure}
-        </div>
-        <Field label="نوع التصرف">
-          <select value={type} onChange={e => setType(e.target.value as typeof type)}
-            className="w-full px-3 py-2.5 text-sm border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-amber-500">
-            <option value="SCRAP">هدر نهائي (Scrap)</option>
-            <option value="REWORK">إعادة عمل (Rework)</option>
-            <option value="RETURN_FOR_INSPECTION">إعادة فحص</option>
-          </select>
-        </Field>
-        <Field label="الكمية">
-          <input type="number" min="0.01" max={tx.rejected_qty} step="0.01" value={qty}
-            onChange={e => setQty(e.target.value)} required
-            className="w-full px-3 py-2.5 text-sm border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-amber-500" />
-        </Field>
-        <Field label="السبب">
-          <textarea value={reason} onChange={e => setReason(e.target.value)} required rows={2}
-            className="w-full px-3 py-2.5 text-sm border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-amber-500" />
-        </Field>
-        {error && <div className="text-sm text-red-600 bg-red-50 border border-red-100 rounded-lg px-3 py-2">{error}</div>}
-        <div className="flex gap-2 pt-1">
-          <Button type="submit" disabled={loading || !reason.trim()}>
-            {loading ? <Loader2 className="w-4 h-4 animate-spin" /> : <CheckCircle className="w-4 h-4" />}
-            تأكيد التصرف
-          </Button>
-          <Button type="button" variant="secondary" onClick={onClose}>إلغاء</Button>
-        </div>
-      </form>
-    </Modal>
-  );
-}
-
-// ============================================================
-// Open Session Modal
-// ============================================================
-
-function OpenSessionModal({ workOrders, onClose, onCreated }: {
-  workOrders: (WorkOrder & { model: ProductModel | null })[];
-  onClose: () => void;
-  onCreated: () => void;
-}) {
-  const [woId, setWoId] = useState('');
-  const [batchId, setBatchId] = useState('');
-  const [stageId, setStageId] = useState('');
-  const [machineId, setMachineId] = useState('');
-  const [shift, setShift] = useState('');
-  const [batches, setBatches] = useState<ParentBatch[]>([]);
-  const [stages, setStages] = useState<RoutingStage[]>([]);
-  const [machines, setMachines] = useState<Machine[]>([]);
-  const [loading, setLoading] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-
-  useEffect(() => {
-    (async () => {
-      try {
-        const data = await fetchMachines(undefined, undefined, undefined, true);
-        setMachines(data);
-      } catch { /* ignore */ }
-    })();
-  }, []);
-
-  // Fetch batches for selected work order
-  const loadBatches = useCallback(async (woId: string) => {
-    const { data, error } = await supabase
-      .from('parent_batches')
-      .select('*')
-      .eq('work_order_id', woId)
-      .in('status', ['CREATED', 'IN_PROGRESS'])
-      .order('created_at', { ascending: false });
-    if (error) return;
-    setBatches(data as ParentBatch[]);
-  }, []);
-
-  // Fetch routing stages when batch is selected
-  const loadStages = useCallback(async (batch: ParentBatch) => {
-    // Get routing versions for this template
-    const { data: versions } = await supabase
-      .from('routing_versions')
-      .select('*, template:routing_templates(*)')
-      .eq('status', 'ACTIVE')
-      .order('version_number', { ascending: false })
-      .limit(1);
-    if (versions && versions.length > 0) {
-      const { data: stageData } = await supabase
-        .from('routing_stages')
-        .select('*')
-        .eq('routing_version_id', versions[0].id)
-        .eq('is_active', true)
-        .order('sequence_number', { ascending: true });
-      setStages(stageData as RoutingStage[] ?? []);
-    }
-  }, []);
-
-  async function handleSubmit(e: React.FormEvent) {
-    e.preventDefault();
-    setLoading(true);
-    setError(null);
-    try {
-      await openShiftSession({
-        work_order_id: woId,
-        parent_batch_id: batchId,
-        production_stage_id: stageId,
-        machine_id: machineId || undefined,
-        shift: shift || undefined,
-      });
-      onCreated();
-    } catch (err) {
-      setError(err instanceof Error ? err.message : 'حدث خطأ');
-    } finally {
-      setLoading(false);
-    }
-  }
-
-  return (
-    <Modal open title="فتح وردية إنتاج" onClose={onClose} maxWidth="max-w-lg">
-      <form onSubmit={handleSubmit} className="space-y-4">
-        <Field label="أمر العمل">
-          <select value={woId} onChange={e => { setWoId(e.target.value); loadBatches(e.target.value); setBatchId(''); }}
-            required className="w-full px-3 py-2.5 text-sm border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-amber-500">
-            <option value="">اختر أمر عمل</option>
-            {workOrders.map(w => <option key={w.id} value={w.id}>{w.wo_number} — {w.model?.name}</option>)}
-          </select>
-        </Field>
-        <Field label="دفعة الإنتاج">
-          <select value={batchId} onChange={e => {
-              setBatchId(e.target.value);
-              const b = batches.find(x => x.id === e.target.value);
-              if (b) loadStages(b);
-            }} required disabled={!woId}
-            className="w-full px-3 py-2.5 text-sm border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-amber-500">
-            <option value="">اختر دفعة</option>
-            {batches.map(b => <option key={b.id} value={b.id}>{b.batch_number} ({b.planned_quantity})</option>)}
-          </select>
-        </Field>
-        <Field label="مرحلة الإنتاج">
-          <select value={stageId} onChange={e => setStageId(e.target.value)} required disabled={!batchId}
-            className="w-full px-3 py-2.5 text-sm border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-amber-500">
-            <option value="">اختر المرحلة</option>
-            {stages.map(s => <option key={s.id} value={s.id}>{s.stage_name} ({s.stage_code})</option>)}
-          </select>
-        </Field>
-        <div className="grid grid-cols-2 gap-3">
-          <Field label="الماكينة (اختياري)">
-            <select value={machineId} onChange={e => setMachineId(e.target.value)}
-              className="w-full px-3 py-2.5 text-sm border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-amber-500">
-              <option value="">—</option>
-              {machines.map(m => <option key={m.id} value={m.id}>{m.name} ({m.machine_code})</option>)}
-            </select>
-          </Field>
-          <Field label="الوردية">
-            <select value={shift} onChange={e => setShift(e.target.value)}
-              className="w-full px-3 py-2.5 text-sm border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-amber-500">
-              <option value="">—</option>
-              <option value="MORNING">صباحية</option>
-              <option value="EVENING">مسائية</option>
-              <option value="NIGHT">ليلية</option>
-            </select>
-          </Field>
-        </div>
-        {error && <div className="text-sm text-red-600 bg-red-50 border border-red-100 rounded-lg px-3 py-2">{error}</div>}
-        <div className="flex gap-2 pt-1">
-          <Button type="submit" disabled={loading || !woId || !batchId || !stageId}>
-            {loading ? <Loader2 className="w-4 h-4 animate-spin" /> : <PlayCircle className="w-4 h-4" />}
-            فتح الوردية
-          </Button>
-          <Button type="button" variant="secondary" onClick={onClose}>إلغاء</Button>
-        </div>
-      </form>
-    </Modal>
-  );
-}
-
-// ============================================================
-// Create Batch Modal
-// ============================================================
-
-function CreateBatchModal({ workOrders, onClose, onCreated }: {
-  workOrders: (WorkOrder & { model: ProductModel | null })[];
-  onClose: () => void;
-  onCreated: () => void;
-}) {
-  const [woId, setWoId] = useState('');
-  const [qty, setQty] = useState('');
-  const [loading, setLoading] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-
-  const selectedWO = workOrders.find(w => w.id === woId);
-
-  async function handleSubmit(e: React.FormEvent) {
-    e.preventDefault();
-    setLoading(true);
-    setError(null);
-    try {
-      await createProductionBatch(woId, parseFloat(qty));
-      onCreated();
-    } catch (err) {
-      setError(err instanceof Error ? err.message : 'حدث خطأ');
-    } finally {
-      setLoading(false);
-    }
-  }
-
-  return (
-    <Modal open title="إنشاء دفعة إنتاج" onClose={onClose}>
-      <form onSubmit={handleSubmit} className="space-y-4">
-        <Field label="أمر العمل">
-          <select value={woId} onChange={e => setWoId(e.target.value)} required
-            className="w-full px-3 py-2.5 text-sm border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-amber-500">
-            <option value="">اختر أمر عمل</option>
-            {workOrders.map(w => <option key={w.id} value={w.id}>{w.wo_number} — {w.model?.name}</option>)}
-          </select>
-        </Field>
-        {selectedWO && (
-          <div className="bg-slate-50 rounded-lg px-3 py-2 text-sm text-slate-600">
-            الكمية المخططة: {selectedWO.planned_quantity} {selectedWO.unit_of_measure}
+        <div className="grid grid-cols-3 gap-3">
+          <div>
+            <label className="block text-xs font-medium text-slate-600 mb-1">صالح</label>
+            <input type="number" min="0" value={good} onChange={e => setGood(e.target.value)} required
+              className="w-full px-3 py-2 text-sm border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-emerald-500" />
           </div>
-        )}
-        <Field label="الكمية المخططة للدفعة">
-          <input type="number" min="0.01" step="0.01" value={qty}
-            onChange={e => setQty(e.target.value)} required
-            className="w-full px-3 py-2.5 text-sm border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-amber-500" />
-        </Field>
-        <div className="bg-blue-50 border border-blue-100 rounded-lg px-3 py-2 text-sm text-blue-700">
-          النظام يمنع الإفراط في الإنتاج: مجموع دفعات الأمر لا يمكن أن يتجاوز الكمية المعتمدة.
+          <div>
+            <label className="block text-xs font-medium text-slate-600 mb-1">إسكراب</label>
+            <input type="number" min="0" value={scrap} onChange={e => setScrap(e.target.value)}
+              className="w-full px-3 py-2 text-sm border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-red-500" />
+          </div>
+          <div>
+            <label className="block text-xs font-medium text-slate-600 mb-1">مرفوض</label>
+            <input type="number" min="0" value={reject} onChange={e => setReject(e.target.value)}
+              className="w-full px-3 py-2 text-sm border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-amber-500" />
+          </div>
+        </div>
+        <div>
+          <label className="block text-xs font-medium text-slate-600 mb-1">سبب الإسكراب (اختياري)</label>
+          <input value={reason} onChange={e => setReason(e.target.value)}
+            className="w-full px-3 py-2 text-sm border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-amber-500" />
         </div>
         {error && <div className="text-sm text-red-600 bg-red-50 border border-red-100 rounded-lg px-3 py-2">{error}</div>}
         <div className="flex gap-2 pt-1">
-          <Button type="submit" disabled={loading || !woId || !qty}>
-            {loading ? <Loader2 className="w-4 h-4 animate-spin" /> : <Plus className="w-4 h-4" />}
-            إنشاء
+          <Button type="submit" disabled={loading}>
+            {loading ? <Loader2 className="w-4 h-4 animate-spin" /> : <CheckCircle2 className="w-4 h-4" />}
+            إنهاء وإعتماد
           </Button>
           <Button type="button" variant="secondary" onClick={onClose}>إلغاء</Button>
         </div>
@@ -1083,59 +509,248 @@ function CreateBatchModal({ workOrders, onClose, onCreated }: {
 }
 
 // ============================================================
-// Shared components
+// Scrap Modal
 // ============================================================
 
-import { supabase } from '@/lib/supabase';
-
-function StatBox({ icon: Icon, label, value, color }: {
-  icon: React.ComponentType<{ className?: string }>;
-  label: string;
-  value: string;
-  color: string;
+function ScrapModal({ swo, defects, woId, onClose, onDone }: {
+  swo: SubWorkOrderWithRelations;
+  defects: DefectMaster[];
+  woId: string;
+  onClose: () => void;
+  onDone: () => void;
 }) {
+  const [quantity, setQuantity] = useState('1');
+  const [defectCode, setDefectCode] = useState('');
+  const [reason, setReason] = useState('');
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  async function handleSubmit(e: React.FormEvent) {
+    e.preventDefault();
+    setLoading(true);
+    setError(null);
+    try {
+      await addScrapRecord({
+        sub_work_order_id: swo.id,
+        work_order_id: woId,
+        quantity: Number(quantity),
+        defect_code: defectCode || undefined,
+        reason: reason || undefined,
+      });
+      onDone();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'حدث خطأ');
+    } finally {
+      setLoading(false);
+    }
+  }
+
   return (
-    <div className="bg-white rounded-xl border border-slate-200 shadow-sm p-3 flex items-center gap-3">
-      <Icon className={`w-5 h-5 ${color}`} />
-      <div>
-        <p className="text-xs font-medium text-slate-500">{label}</p>
-        <p className="text-lg font-bold text-slate-800">{value}</p>
+    <Modal open title={`تسجيل إسكراب: ${swo.stage_name}`} onClose={onClose} maxWidth="max-w-md">
+      <form onSubmit={handleSubmit} className="space-y-4">
+        <div>
+          <label className="block text-xs font-medium text-slate-600 mb-1">الكمية</label>
+          <input type="number" min="1" value={quantity} onChange={e => setQuantity(e.target.value)} required
+            className="w-full px-3 py-2 text-sm border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-red-500" />
+        </div>
+        <div>
+          <label className="block text-xs font-medium text-slate-600 mb-1">نوع العيب</label>
+          <select value={defectCode} onChange={e => setDefectCode(e.target.value)}
+            className="w-full px-3 py-2 text-sm border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-amber-500">
+            <option value="">— اختر —</option>
+            {defects.filter(d => d.is_active).map(d => <option key={d.id} value={d.defect_code}>{d.defect_name}</option>)}
+          </select>
+        </div>
+        <div>
+          <label className="block text-xs font-medium text-slate-600 mb-1">السبب</label>
+          <textarea value={reason} onChange={e => setReason(e.target.value)} rows={2}
+            className="w-full px-3 py-2 text-sm border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-amber-500" />
+        </div>
+        {error && <div className="text-sm text-red-600 bg-red-50 border border-red-100 rounded-lg px-3 py-2">{error}</div>}
+        <div className="flex gap-2 pt-1">
+          <Button type="submit" variant="danger" disabled={loading}>
+            {loading ? <Loader2 className="w-4 h-4 animate-spin" /> : <Trash2 className="w-4 h-4" />}
+            تسجيل
+          </Button>
+          <Button type="button" variant="secondary" onClick={onClose}>إلغاء</Button>
+        </div>
+      </form>
+    </Modal>
+  );
+}
+
+// ============================================================
+// Quality Decision Modal
+// ============================================================
+
+function QualityModal({ target, onClose, onDone }: {
+  target: { swo: SubWorkOrderWithRelations | null; wo: SimplifiedWorkOrder | null };
+  onClose: () => void;
+  onDone: () => void;
+}) {
+  const [status, setStatus] = useState<QualityGateStatus>('PASSED');
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  async function handleSubmit(e: React.FormEvent) {
+    e.preventDefault();
+    setLoading(true);
+    setError(null);
+    try {
+      if (target.swo) {
+        await setSubWorkOrderQuality(target.swo.id, status);
+      } else if (target.wo) {
+        await setWorkOrderQuality(target.wo.id, status);
+      }
+      onDone();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'حدث خطأ');
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  const title = target.swo ? `قرار الجودة: ${target.swo.stage_name}` : 'قرار الجودة للأمر الرئيسي';
+
+  return (
+    <Modal open title={title} onClose={onClose} maxWidth="max-w-md">
+      <form onSubmit={handleSubmit} className="space-y-4">
+        <div>
+          <label className="block text-sm font-medium text-slate-700 mb-2">القرار</label>
+          <div className="grid grid-cols-2 gap-2">
+            {(['PASSED', 'FAILED', 'REWORK'] as QualityGateStatus[]).map(s => (
+              <button key={s} type="button" onClick={() => setStatus(s)}
+                className={`px-4 py-2.5 text-sm rounded-lg border transition-colors ${
+                  status === s ? QUALITY_GATE_COLORS[s] + ' font-medium border-current' : 'bg-white border-slate-200 text-slate-600 hover:border-slate-300'
+                }`}>{QUALITY_GATE_LABELS[s]}</button>
+            ))}
+          </div>
+        </div>
+        {error && <div className="text-sm text-red-600 bg-red-50 border border-red-100 rounded-lg px-3 py-2">{error}</div>}
+        <div className="flex gap-2 pt-1">
+          <Button type="submit" disabled={loading}>
+            {loading ? <Loader2 className="w-4 h-4 animate-spin" /> : <ShieldCheck className="w-4 h-4" />}
+            تأكيد
+          </Button>
+          <Button type="button" variant="secondary" onClick={onClose}>إلغاء</Button>
+        </div>
+      </form>
+    </Modal>
+  );
+}
+
+// ============================================================
+// OEE Dashboard Tab
+// ============================================================
+
+function OeeDashboardTab() {
+  const [snapshots, setSnapshots] = useState<Array<OeeSnapshot & { work_order?: { id: string; wo_number: string; model?: { name: string } } }>>([]);
+  const [metrics, setMetrics] = useState<{ totalWorkOrders: number; qualityPendingCount: number; qualityPassedCount: number; warehousePendingCount: number; totalScrap: number; avgOee: number } | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+
+  const load = useCallback(async () => {
+    setLoading(true);
+    setError(null);
+    try {
+      const [snaps, m] = await Promise.all([
+        fetchAllOeeSnapshots(),
+        fetchMesDashboard(),
+      ]);
+      setSnapshots(snaps as Array<OeeSnapshot & { work_order?: { id: string; wo_number: string; model?: { name: string } } }>);
+      setMetrics(m);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'حدث خطأ');
+    } finally {
+      setLoading(false);
+    }
+  }, []);
+
+  useEffect(() => { load(); }, [load]);
+
+  if (loading) return <div className="flex items-center justify-center py-16"><Loader2 className="w-6 h-6 text-amber-600 animate-spin" /></div>;
+  if (error) return <div className="mb-4 flex items-center gap-2 text-sm text-red-600 bg-red-50 border border-red-100 rounded-lg px-3 py-2"><AlertCircle className="w-4 h-4" /> {error}</div>;
+
+  const pct = (v: number) => Math.round(v * 100) + '%';
+
+  return (
+    <div>
+      {metrics && (
+        <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mb-4">
+          <DashCard label="إجمالي الأوامر" value={metrics.totalWorkOrders.toString()} />
+          <DashCard label="بانتظار الجودة" value={metrics.qualityPendingCount.toString()} color="text-amber-600" />
+          <DashCard label="مقبول جودة" value={metrics.qualityPassedCount.toString()} color="text-emerald-600" />
+          <DashCard label="بانتظار المخزن" value={metrics.warehousePendingCount.toString()} color="text-blue-600" />
+          <DashCard label="إجمالي الإسكراب" value={metrics.totalScrap.toString()} color="text-red-600" />
+          <DashCard label="متوسط OEE" value={pct(metrics.avgOee)} color={metrics.avgOee >= 0.6 ? 'text-emerald-600' : 'text-amber-600'} />
+        </div>
+      )}
+
+      <div className="bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden">
+        <div className="px-4 py-3 border-b border-slate-100">
+          <h3 className="text-sm font-semibold text-slate-700 flex items-center gap-1"><Gauge className="w-4 h-4" /> سجلات OEE</h3>
+        </div>
+        {snapshots.length === 0 ? (
+          <div className="p-8 text-center text-sm text-slate-400">لا توجد حسابات OEE بعد. يتم الحساب عند فتح تفاصيل أمر شغل أو الضغط على "إعادة حساب OEE".</div>
+        ) : (
+          <table className="w-full text-sm">
+            <thead className="bg-slate-50 border-b border-slate-200">
+              <tr>
+                <th className="text-right px-4 py-2.5 font-medium text-slate-600">أمر الشغل</th>
+                <th className="text-right px-4 py-2.5 font-medium text-slate-600">الموديل</th>
+                <th className="text-right px-4 py-2.5 font-medium text-slate-600">الإتاحة</th>
+                <th className="text-right px-4 py-2.5 font-medium text-slate-600">الأداء</th>
+                <th className="text-right px-4 py-2.5 font-medium text-slate-600">الجودة</th>
+                <th className="text-right px-4 py-2.5 font-medium text-slate-600">OEE</th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-slate-50">
+              {snapshots.map(s => {
+                const wo = s.work_order as { id: string; wo_number: string; model?: { name: string } } | undefined;
+                const oeeColor = s.oee >= 0.85 ? 'text-emerald-600' : s.oee >= 0.6 ? 'text-amber-600' : 'text-red-600';
+                return (
+                  <tr key={s.id} className="hover:bg-slate-50">
+                    <td className="px-4 py-2.5 font-mono text-xs text-slate-700" dir="ltr">{wo?.wo_number ?? '—'}</td>
+                    <td className="px-4 py-2.5 text-slate-600">{wo?.model?.name ?? '—'}</td>
+                    <td className="px-4 py-2.5 text-blue-600" dir="ltr">{pct(s.availability)}</td>
+                    <td className="px-4 py-2.5 text-amber-600" dir="ltr">{pct(s.performance)}</td>
+                    <td className="px-4 py-2.5 text-emerald-600" dir="ltr">{pct(s.quality)}</td>
+                    <td className={`px-4 py-2.5 font-bold ${oeeColor}`} dir="ltr">{pct(s.oee)}</td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        )}
       </div>
     </div>
   );
 }
 
-function InfoBox({ label, value }: { label: string; value: string }) {
+function DashCard({ label, value, color }: { label: string; value: string; color?: string }) {
   return (
-    <div className="bg-white rounded-xl border border-slate-200 shadow-sm p-3">
-      <p className="text-xs font-medium text-slate-500 mb-0.5">{label}</p>
-      <p className="text-sm font-semibold text-slate-800">{value}</p>
+    <div className="bg-white rounded-xl border border-slate-200 shadow-sm p-4">
+      <div className="text-xs text-slate-500 mb-1">{label}</div>
+      <div className={`text-2xl font-bold ${color ?? 'text-slate-800'}`} dir="ltr">{value}</div>
     </div>
   );
 }
 
-function SummaryStat({ label, value, color }: { label: string; value: number; color: string }) {
-  return (
-    <div className="text-center">
-      <p className="text-xs text-slate-500 mb-1">{label}</p>
-      <p className={`text-xl font-bold ${color}`}>{value}</p>
-    </div>
-  );
+// ============================================================
+// Helpers
+// ============================================================
+
+function fmt(iso: string): string {
+  const d = new Date(iso);
+  return d.toLocaleString('ar-EG', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' });
 }
 
-function TabBtn({ active, onClick, icon: Icon, children }: {
-  active: boolean;
-  onClick: () => void;
-  icon: React.ComponentType<{ className?: string }>;
-  children: React.ReactNode;
-}) {
-  return (
-    <button onClick={onClick}
-      className={`flex items-center gap-1.5 px-4 py-2.5 text-sm font-medium border-b-2 transition-colors ${
-        active ? 'border-amber-600 text-amber-700' : 'border-transparent text-slate-500 hover:text-slate-700'
-      }`}>
-      <Icon className="w-4 h-4" />
-      {children}
-    </button>
-  );
+async function handleStart(subWoId: string, reload: () => void, setError: (e: string | null) => void) {
+  try { await startSubWorkOrder(subWoId); reload(); }
+  catch (e) { setError(e instanceof Error ? e.message : 'خطأ'); }
+}
+
+async function handleAssignMachine(subWoId: string, machineId: string | null, reload: () => void, setError: (e: string | null) => void) {
+  try { await assignSubWorkOrderMachine(subWoId, machineId); reload(); }
+  catch (e) { setError(e instanceof Error ? e.message : 'خطأ'); }
 }
