@@ -1,7 +1,8 @@
 import { useState } from 'react';
-import { Factory, Mail, Lock, User as UserIcon, Loader2 } from 'lucide-react';
+import { Factory, Mail, Lock, User as UserIcon, Loader2, AlertCircle } from 'lucide-react';
 import { useAuth } from '@/context/AuthContext';
 import { Button } from '@/components/ui/Button';
+import { isConfigured } from '@/lib/supabase';
 
 export function LoginPage() {
   const { signIn, signUp } = useAuth();
@@ -38,6 +39,20 @@ export function LoginPage() {
           <h1 className="text-2xl font-bold text-white">نظام MES</h1>
           <p className="text-sm text-slate-400 mt-1">نظام تنفيذ التصنيع — مصنع مكبرات الصوت</p>
         </div>
+
+        {!isConfigured && (
+          <div className="bg-amber-50 border border-amber-200 rounded-xl p-4 mb-4 text-sm text-amber-700">
+            <div className="flex items-start gap-2">
+              <AlertCircle className="w-5 h-5 shrink-0 mt-0.5" />
+              <div>
+                <p className="font-medium mb-1">إعدادات Supabase غير مكملة</p>
+                <p className="text-xs text-amber-600">
+                  يجب إضافة VITE_SUPABASE_URL و VITE_SUPABASE_ANON_KEY في ملف البيئة (.env) لتفعيل النظام.
+                </p>
+              </div>
+            </div>
+          </div>
+        )}
 
         {/* Form card */}
         <div className="bg-white rounded-2xl shadow-xl p-6">
