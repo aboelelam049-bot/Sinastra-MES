@@ -460,6 +460,23 @@ export interface KitTemplateLine {
   sort_order: number;
 }
 
+// ============================================================
+// Phase 5 — Work Center Input Materials
+// ============================================================
+
+export interface WorkCenterMaterial {
+  id: string;
+  work_center_id: string;
+  item_id: string;
+  item_code: string;
+  consumption_qty: number;
+  unit_of_measure: string;
+  is_active: boolean;
+  created_by: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
 export interface BOMLineInput {
   item_id: string;
   required_qty: number;

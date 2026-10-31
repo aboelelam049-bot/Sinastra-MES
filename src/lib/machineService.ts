@@ -2,6 +2,7 @@ import { supabase } from '@/lib/supabase';
 import type {
   Department, WorkCenter, Machine, MachineStatus,
   MachineStatusHistory, MachineAvailability, AvailabilityType,
+  WorkCenterMaterial, ItemMaster,
 } from '@/types';
 
 // ============================================================
@@ -255,5 +256,52 @@ export async function createMachineAvailability(fields: {
 export async function deleteMachineAvailability(id: string) {
   const { error } = await supabase
     .from('machine_availability').delete().eq('id', id);
+  if (error) throw error;
+}
+
+// ============================================================
+// Work Center Input Materials
+// ============================================================
+
+export async function fetchWorkCenterMaterials(workCenterId: string) {
+  const { data, error } = await supabase
+    .from('work_center_materials')
+    .select('*, item:item_master(*)')
+    .eq('work_center_id', workCenterId)
+    .order('created_at', { ascending: false });
+  if (error) throw error;
+  return data as (WorkCenterMaterial & { item: ItemMaster })[];
+}
+
+export async function addWorkCenterMaterial(fields: {
+  work_center_id: string;
+  item_id: string;
+  item_code: string;
+  consumption_qty: number;
+  unit_of_measure: string;
+}) {
+  const { data, error } = await supabase
+    .from('work_center_materials')
+    .insert(fields)
+    .select('*, item:item_master(*)')
+    .single();
+  if (error) throw error;
+  return data as WorkCenterMaterial & { item: ItemMaster };
+}
+
+export async function updateWorkCenterMaterial(
+  id: string,
+  fields: Partial<Pick<WorkCenterMaterial, 'consumption_qty' | 'unit_of_measure' | 'is_active'>>,
+) {
+  const { data, error } = await supabase
+    .from('work_center_materials').update(fields).eq('id', id)
+    .select('*, item:item_master(*)').single();
+  if (error) throw error;
+  return data as WorkCenterMaterial & { item: ItemMaster };
+}
+
+export async function deleteWorkCenterMaterial(id: string) {
+  const { error } = await supabase
+    .from('work_center_materials').delete().eq('id', id);
   if (error) throw error;
 }
