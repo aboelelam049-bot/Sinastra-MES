@@ -286,6 +286,141 @@ export interface QualityCard {
   physical_card_confirmed: boolean;
   inspected_at: string | null;
   created_at: string;
+  // Phase 7 extensions
+  inspection_lot_id: string | null;
+  work_order_id: string | null;
+  parent_batch_id: string | null;
+  product_model_id: string | null;
+  item_id: string | null;
+  item_code: string | null;
+  item_name: string | null;
+  production_route_id: string | null;
+  routing_version_id: string | null;
+  final_stage_id: string | null;
+  final_stage_name: string | null;
+  accepted_quantity: number;
+  approver_id: string | null;
+  approval_id: string | null;
+  approval_date: string | null;
+  wo_number: string | null;
+  batch_number: string | null;
+  model_name: string | null;
+  print_count: number;
+  updated_at: string;
+}
+
+// ============================================================
+// Phase 7 — Quality Management Types
+// ============================================================
+
+export type InspectionLotStatus = 'PENDING' | 'IN_INSPECTION' | 'INSPECTED' | 'APPROVED' | 'REJECTED' | 'CLOSED';
+
+export interface DefectMaster {
+  id: string;
+  defect_code: string;
+  defect_name: string;
+  defect_category: string;
+  description: string | null;
+  applicable_item_types: string;
+  applicable_production_stages: string;
+  is_active: boolean;
+  created_by: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface InspectionLot {
+  id: string;
+  lot_number: string;
+  work_order_id: string;
+  parent_batch_id: string;
+  product_model_id: string | null;
+  item_id: string | null;
+  production_route_id: string;
+  routing_version_id: string | null;
+  final_stage_id: string;
+  source_transaction_ids: string;
+  quantity_submitted: number;
+  unit_of_measure: string;
+  status: InspectionLotStatus;
+  created_by: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface InspectionResultRecord {
+  id: string;
+  inspection_lot_id: string;
+  inspected_quantity: number;
+  accepted_quantity: number;
+  rejected_quantity: number;
+  pending_inspection_quantity: number;
+  unit_of_measure: string;
+  inspection_date: string;
+  inspector_id: string | null;
+  defect_codes: string | null;
+  defect_description: string | null;
+  notes: string | null;
+  attachments: string | null;
+  is_reinspection: boolean;
+  original_inspection_id: string | null;
+  created_at: string;
+}
+
+export interface InspectionDefect {
+  id: string;
+  inspection_result_id: string;
+  defect_id: string;
+  defect_quantity: number;
+  notes: string | null;
+  created_at: string;
+}
+
+export type QualityDispositionType = 'ACCEPT' | 'REWORK' | 'SCRAP' | 'RE_INSPECTION';
+
+export interface QualityDisposition {
+  id: string;
+  inspection_lot_id: string;
+  inspection_result_id: string | null;
+  disposition_type: QualityDispositionType;
+  quantity: number;
+  unit_of_measure: string;
+  reason: string | null;
+  approver_id: string | null;
+  approver_role: string | null;
+  original_rejected_quantity: number | null;
+  rework_reference_id: string | null;
+  re_inspection_result_id: string | null;
+  is_final_scrap: boolean;
+  created_at: string;
+}
+
+export type QualityApprovalDecision = 'ACCEPT' | 'REJECT' | 'REWORK' | 'SCRAP' | 'RE_INSPECTION';
+
+export interface QualityApproval {
+  id: string;
+  inspection_lot_id: string;
+  decision: QualityApprovalDecision;
+  approved_quantity: number;
+  rejected_quantity: number;
+  disposition: string | null;
+  approver_id: string;
+  approver_role: string;
+  approval_timestamp: string;
+  notes: string | null;
+  is_reversed: boolean;
+  reversal_reason: string | null;
+  reversed_at: string | null;
+  reversed_by: string | null;
+  created_at: string;
+}
+
+export interface QualityCardPrint {
+  id: string;
+  quality_card_id: string;
+  printed_by: string | null;
+  printed_at: string;
+  print_notes: string | null;
 }
 
 // ============================================================
