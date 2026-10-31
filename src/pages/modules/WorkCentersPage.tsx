@@ -1,7 +1,7 @@
 import { useState, useEffect, useCallback } from 'react';
 import {
   Factory, Plus, Loader2, AlertCircle, RefreshCw,
-  Search, Pencil, Power, ArrowUpDown, ArrowRight, Cog, Package, Trash2,
+  Search, Pencil, Power, ArrowUpDown, ArrowRight, Cog,
 } from 'lucide-react';
 import { PageHeader } from '@/components/ui/PageHeader';
 import { Badge } from '@/components/ui/Badge';
@@ -12,10 +12,8 @@ import { Field, Pagination, ITEM_PAGE_SIZE } from './ProductFamiliesPage';
 import {
   fetchWorkCenters, createWorkCenter, updateWorkCenter, toggleWorkCenterActive,
   fetchDepartments, fetchMachines,
-  fetchWorkCenterMaterials, addWorkCenterMaterial, deleteWorkCenterMaterial,
 } from '@/lib/machineService';
-import { fetchItems } from '@/lib/masterDataService';
-import type { Department, WorkCenter, Machine, ItemMaster, WorkCenterMaterial } from '@/types';
+import type { Department, WorkCenter, Machine } from '@/types';
 
 type WCWithDept = WorkCenter & { department: Department };
 type SortField = 'work_center_code' | 'name' | 'created_at';
@@ -260,37 +258,17 @@ function WCFormModal({ departments, wc, onClose, onSaved }: {
 
 function WorkCenterDetail({ wc, onBack }: { wc: WCWithDept; onBack: () => void }) {
   const [machines, setMachines] = useState<Machine[]>([]);
-  const [materials, setMaterials] = useState<(WorkCenterMaterial & { item: ItemMaster })[]>([]);
   const [loading, setLoading] = useState(true);
-  const [showAddMat, setShowAddMat] = useState(false);
-  const [removeMat, setRemoveMat] = useState<(WorkCenterMaterial & { item: ItemMaster }) | null>(null);
-  const [matError, setMatError] = useState<string | null>(null);
 
-  const loadAll = useCallback(async () => {
-    setLoading(true);
-    try {
-      const [machineData, matData] = await Promise.all([
-        fetchMachines(undefined, undefined, undefined, false),
-        fetchWorkCenterMaterials(wc.id),
-      ]);
-      setMachines(machineData.filter(m => m.work_center_id === wc.id));
-      setMaterials(matData);
-    } catch { /* ignore */ }
-    finally { setLoading(false); }
+  useEffect(() => {
+    (async () => {
+      try {
+        const data = await fetchMachines(undefined, undefined, undefined, false);
+        setMachines(data.filter(m => m.work_center_id === wc.id));
+      } catch { /* ignore */ }
+      finally { setLoading(false); }
+    })();
   }, [wc.id]);
-
-  useEffect(() => { loadAll(); }, [loadAll]);
-
-  async function handleRemoveMat() {
-    if (!removeMat) return;
-    try {
-      await deleteWorkCenterMaterial(removeMat.id);
-      setRemoveMat(null);
-      loadAll();
-    } catch (err) {
-      setMatError(err instanceof Error ? err.message : 'حدث خطأ');
-    }
-  }
 
   return (
     <div>
@@ -345,170 +323,7 @@ function WorkCenterDetail({ wc, onBack }: { wc: WCWithDept; onBack: () => void }
           </table>
         )}
       </div>
-
-      {/* Input Materials Section */}
-      <div className="bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden mt-4">
-        <div className="px-4 py-3 border-b border-slate-100 flex items-center justify-between">
-          <h4 className="text-sm font-semibold text-slate-700 flex items-center gap-2">
-            <Package className="w-4 h-4 text-slate-400" /> المواد المستهلكة
-          </h4>
-          <Button size="sm" variant="secondary" onClick={() => setShowAddMat(true)}>
-            <Plus className="w-3.5 h-3.5" /> إضافة مادة
-          </Button>
-        </div>
-        {matError && (
-          <div className="mx-4 mt-2 text-sm text-red-600 bg-red-50 border border-red-100 rounded-lg px-3 py-2 flex items-center gap-2">
-            <AlertCircle className="w-4 h-4" /> {matError}
-          </div>
-        )}
-        {loading ? (
-          <div className="py-8 flex items-center justify-center"><Loader2 className="w-5 h-5 text-amber-600 animate-spin" /></div>
-        ) : materials.length === 0 ? (
-          <div className="px-4 py-8 text-center text-sm text-slate-400">
-            لا توجد مواد مسجلة لهذا المركز. أضف المواد الخام التي يستهلكها هذا المركز أثناء التشغيل.
-          </div>
-        ) : (
-          <table className="w-full text-sm">
-            <thead className="bg-slate-50 border-b border-slate-200">
-              <tr>
-                <th className="text-right px-4 py-2.5 font-medium text-slate-600">الصنف</th>
-                <th className="text-right px-4 py-2.5 font-medium text-slate-600">الرمز</th>
-                <th className="text-right px-4 py-2.5 font-medium text-slate-600">الكمية/وحدة</th>
-                <th className="text-right px-4 py-2.5 font-medium text-slate-600">الوحدة</th>
-                <th className="px-4 py-2.5"></th>
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-slate-50">
-              {materials.map(mat => (
-                <tr key={mat.id} className="hover:bg-slate-50">
-                  <td className="px-4 py-2.5 text-sm text-slate-700">{mat.item?.name ?? '—'}</td>
-                  <td className="px-4 py-2.5 font-mono text-xs text-slate-500" dir="ltr">{mat.item_code}</td>
-                  <td className="px-4 py-2.5 text-sm font-medium text-slate-700">{mat.consumption_qty}</td>
-                  <td className="px-4 py-2.5 text-xs text-slate-600" dir="ltr">{mat.unit_of_measure}</td>
-                  <td className="px-4 py-2.5">
-                    <button onClick={() => setRemoveMat(mat)} className="p-1 rounded text-red-400 hover:bg-red-50" title="حذف">
-                      <Trash2 className="w-4 h-4" />
-                    </button>
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        )}
-      </div>
-
-      {showAddMat && (
-        <AddMaterialModal
-          workCenterId={wc.id}
-          existingItemIds={materials.map(m => m.item_id)}
-          onClose={() => setShowAddMat(false)}
-          onAdded={() => { setShowAddMat(false); loadAll(); }}
-        />
-      )}
-      <ConfirmDialog
-        open={!!removeMat}
-        title="حذف المادة"
-        message={`سيتم حذف صنف «${removeMat?.item?.name ?? ''}» من مواد هذا المركز.`}
-        confirmLabel="حذف"
-        variant="danger"
-        onConfirm={handleRemoveMat}
-        onCancel={() => setRemoveMat(null)}
-      />
     </div>
-  );
-}
-
-function AddMaterialModal({ workCenterId, existingItemIds, onClose, onAdded }: {
-  workCenterId: string;
-  existingItemIds: string[];
-  onClose: () => void;
-  onAdded: () => void;
-}) {
-  const [items, setItems] = useState<ItemMaster[]>([]);
-  const [search, setSearch] = useState('');
-  const [itemId, setItemId] = useState('');
-  const [qty, setQty] = useState('1');
-  const [uom, setUom] = useState('PCS');
-  const [loading, setLoading] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-
-  useEffect(() => {
-    (async () => {
-      try {
-        const data = await fetchItems(search.trim() || undefined, undefined, true);
-        setItems(data.filter(i => !existingItemIds.includes(i.id)));
-      } catch { /* ignore */ }
-    })();
-  }, [search, existingItemIds]);
-
-  async function handleSubmit(e: React.FormEvent) {
-    e.preventDefault();
-    setLoading(true);
-    setError(null);
-    try {
-      const item = items.find(i => i.id === itemId);
-      if (!item) throw new Error('اختر صنف');
-      await addWorkCenterMaterial({
-        work_center_id: workCenterId,
-        item_id: item.id,
-        item_code: item.item_code,
-        consumption_qty: parseFloat(qty),
-        unit_of_measure: uom,
-      });
-      onAdded();
-    } catch (err) {
-      setError(err instanceof Error ? err.message : 'حدث خطأ');
-    } finally {
-      setLoading(false);
-    }
-  }
-
-  return (
-    <Modal open title="إضافة مادة مستهلكة" onClose={onClose}>
-      <form onSubmit={handleSubmit} className="space-y-4">
-        <Field label="الصنف">
-          <input
-            value={search}
-            onChange={e => setSearch(e.target.value)}
-            placeholder="بحث عن صنف…"
-            className="w-full px-3 py-2 text-sm border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-amber-500 mb-2"
-          />
-          <select
-            value={itemId} onChange={e => {
-              setItemId(e.target.value);
-              const it = items.find(i => i.id === e.target.value);
-              if (it) setUom(it.unit_of_measure);
-            }}
-            required
-            className="w-full px-3 py-2.5 text-sm border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-amber-500"
-          >
-            <option value="">اختر صنف</option>
-            {items.map(i => (
-              <option key={i.id} value={i.id}>{i.name} ({i.item_code})</option>
-            ))}
-          </select>
-        </Field>
-        <div className="grid grid-cols-2 gap-3">
-          <Field label="الكمية لكل وحدة إنتاج">
-            <input type="number" min="0.01" step="0.01" value={qty}
-              onChange={e => setQty(e.target.value)} required
-              className="w-full px-3 py-2.5 text-sm border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-amber-500" />
-          </Field>
-          <Field label="الوحدة">
-            <input value={uom} onChange={e => setUom(e.target.value)} required dir="ltr"
-              className="w-full px-3 py-2.5 text-sm border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-amber-500" />
-          </Field>
-        </div>
-        {error && <div className="text-sm text-red-600 bg-red-50 border border-red-100 rounded-lg px-3 py-2">{error}</div>}
-        <div className="flex gap-2 pt-1">
-          <Button type="submit" disabled={loading || !itemId}>
-            {loading ? <Loader2 className="w-4 h-4 animate-spin" /> : <Plus className="w-4 h-4" />}
-            إضافة
-          </Button>
-          <Button type="button" variant="secondary" onClick={onClose}>إلغاء</Button>
-        </div>
-      </form>
-    </Modal>
   );
 }
 

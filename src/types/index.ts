@@ -477,6 +477,26 @@ export interface WorkCenterMaterial {
   updated_at: string;
 }
 
+// ============================================================
+// Phase 5b — Production Material Consumption
+// ============================================================
+
+export interface ProductionConsumption {
+  id: string;
+  work_order_id: string;
+  work_center_id: string | null;
+  machine_id: string | null;
+  item_id: string;
+  item_code: string;
+  consumed_qty: number;
+  unit_of_measure: string;
+  produced_qty: number | null;
+  consumption_date: string;
+  notes: string | null;
+  created_by: string | null;
+  created_at: string;
+}
+
 export interface BOMLineInput {
   item_id: string;
   required_qty: number;
