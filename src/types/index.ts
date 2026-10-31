@@ -178,6 +178,75 @@ export interface ProductionStage {
   created_at: string;
 }
 
+// ============================================================
+// Phase 5 — Routing Engine Types
+// ============================================================
+
+export type RoutingVersionStatus = 'DRAFT' | 'ACTIVE' | 'RETIRED';
+
+export interface RoutingTemplate {
+  id: string;
+  route_code: string;
+  name: string;
+  description: string | null;
+  product_model_applicability: string;
+  item_type_applicability: string;
+  is_active: boolean;
+  created_by: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface RoutingVersion {
+  id: string;
+  routing_template_id: string;
+  version_number: number;
+  effective_date: string | null;
+  status: RoutingVersionStatus;
+  created_by: string | null;
+  approved_by: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface RoutingStage {
+  id: string;
+  routing_version_id: string;
+  stage_code: string;
+  stage_name: string;
+  stage_name_en: string | null;
+  sequence_number: number;
+  work_center_id: string | null;
+  eligible_machine_ids: string | null;
+  responsible_role: string | null;
+  input_item_type: string | null;
+  output_item_type: string | null;
+  input_unit: string | null;
+  output_unit: string | null;
+  quality_approval_required: boolean;
+  is_active: boolean;
+  created_at: string;
+}
+
+export interface StageTransition {
+  id: string;
+  routing_version_id: string;
+  source_stage_id: string | null;
+  destination_stage_id: string;
+  transition_rules: string | null;
+  is_active: boolean;
+  created_at: string;
+}
+
+export interface RoutingItemRule {
+  id: string;
+  routing_template_id: string;
+  item_type: string | null;
+  product_model_id: string | null;
+  is_active: boolean;
+  created_at: string;
+}
+
 export type WorkOrderStatus = 'CREATED' | 'DRAFT' | 'PLANNED' | 'RELEASED' | 'IN_PROGRESS' | 'ON_HOLD' | 'COMPLETED' | 'CANCELLED';
 export type Priority = 'LOW' | 'NORMAL' | 'HIGH' | 'URGENT';
 
