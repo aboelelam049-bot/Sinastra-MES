@@ -1,0 +1,22 @@
+[
+  {
+    "route": "/",
+    "layout": "desktop",
+    "tabs": "passed: signup fields, active tab, return to login",
+    "submit": "blocked: source account service was not imported; honest unavailable notice shown",
+    "navigation": "not present",
+    "media": "factory SVG matches; no video or canvas",
+    "scroll": "all content visible; no additional scrolling sections",
+    "runtimeErrors": []
+  },
+  {
+    "route": "/",
+    "layout": "phone",
+    "tabs": "passed: signup fields, active tab, return to login",
+    "submit": "blocked: source account service was not imported; honest unavailable notice shown",
+    "navigation": "not present",
+    "media": "factory SVG matches; no video or canvas",
+    "scroll": "all content visible; no additional scrolling sections",
+    "runtimeErrors": []
+  }
+]
