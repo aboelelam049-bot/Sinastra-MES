@@ -3,6 +3,7 @@ import { ChevronLeft, Factory } from 'lucide-react';
 import { NAV_ITEMS } from '@/lib/navigation';
 import { MODULE_ACCESS } from '@/lib/roles';
 import { getIcon } from '@/lib/icons';
+import { isModuleEnabled, type ModuleSetting } from '@/lib/moduleSettings';
 import type { ModuleKey, UserRole } from '@/types';
 
 interface SidebarProps {
@@ -11,9 +12,10 @@ interface SidebarProps {
   userRole: UserRole;
   collapsed: boolean;
   onToggleCollapse: () => void;
+  moduleSettings?: ModuleSetting[] | null;
 }
 
-export function Sidebar({ activeModule, onNavigate, userRole, collapsed, onToggleCollapse }: SidebarProps) {
+export function Sidebar({ activeModule, onNavigate, userRole, collapsed, onToggleCollapse, moduleSettings }: SidebarProps) {
   const allowedModules = MODULE_ACCESS[userRole] ?? [];
   const [hovered, setHovered] = useState<string | null>(null);
 
@@ -23,7 +25,6 @@ export function Sidebar({ activeModule, onNavigate, userRole, collapsed, onToggl
         collapsed ? 'w-[68px]' : 'w-[260px]'
       }`}
     >
-      {/* Logo */}
       <div className="h-16 flex items-center gap-3 px-4 border-b border-slate-800 shrink-0">
         <div className="w-9 h-9 rounded-lg bg-amber-600 flex items-center justify-center shrink-0">
           <Factory className="w-5 h-5 text-white" />
@@ -36,12 +37,12 @@ export function Sidebar({ activeModule, onNavigate, userRole, collapsed, onToggl
         )}
       </div>
 
-      {/* Navigation */}
       <nav className="flex-1 overflow-y-auto py-3 px-2">
         <ul className="space-y-0.5">
           {NAV_ITEMS.map((item) => {
             const isAllowed = allowedModules.includes(item.key);
             if (!isAllowed) return null;
+            if (!isModuleEnabled(moduleSettings ?? null, item.key)) return null;
 
             const Icon = getIcon(item.icon);
             const isActive = activeModule === item.key;
@@ -72,7 +73,6 @@ export function Sidebar({ activeModule, onNavigate, userRole, collapsed, onToggl
         </ul>
       </nav>
 
-      {/* Collapse toggle */}
       <div className="border-t border-slate-800 p-2 shrink-0">
         <button
           onClick={onToggleCollapse}

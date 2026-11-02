@@ -171,3 +171,67 @@ export const LOADING_STATUS_COLORS: Record<LoadingStatus, string> = {
   COMPLETED: 'bg-slate-100 text-slate-600 border-slate-200',
   CANCELLED: 'bg-red-100 text-red-700 border-red-200',
 };
+
+// ============================================================
+// Simplified MES Status Labels
+// ============================================================
+
+import type { MasterPlanStatus, MonthlyPlanStatus, SubWorkOrderStatus, QualityGateStatus } from '@/types';
+
+export const MASTER_PLAN_STATUS_LABELS: Record<MasterPlanStatus, string> = {
+  DRAFT: 'مسودة',
+  APPROVED: 'معتمدة',
+  CLOSED: 'مغلقة',
+};
+
+export const MASTER_PLAN_STATUS_COLORS: Record<MasterPlanStatus, string> = {
+  DRAFT: 'bg-slate-100 text-slate-600 border-slate-200',
+  APPROVED: 'bg-emerald-100 text-emerald-700 border-emerald-200',
+  CLOSED: 'bg-slate-100 text-slate-400 border-slate-200',
+};
+
+export const MONTHLY_PLAN_STATUS_LABELS: Record<MonthlyPlanStatus, string> = {
+  DRAFT: 'مسودة',
+  APPROVED: 'معتمدة',
+  IN_PROGRESS: 'قيد التنفيذ',
+  COMPLETED: 'مكتملة',
+  CANCELLED: 'ملغية',
+};
+
+export const MONTHLY_PLAN_STATUS_COLORS: Record<MonthlyPlanStatus, string> = {
+  DRAFT: 'bg-slate-100 text-slate-600 border-slate-200',
+  APPROVED: 'bg-emerald-100 text-emerald-700 border-emerald-200',
+  IN_PROGRESS: 'bg-amber-100 text-amber-700 border-amber-200',
+  COMPLETED: 'bg-teal-100 text-teal-700 border-teal-200',
+  CANCELLED: 'bg-red-100 text-red-700 border-red-200',
+};
+
+export const SUB_WO_STATUS_LABELS: Record<SubWorkOrderStatus, string> = {
+  PENDING: 'بانتظار البدء',
+  IN_PROGRESS: 'قيد التنفيذ',
+  COMPLETED: 'مكتمل',
+  ON_HOLD: 'معلّق',
+  CANCELLED: 'ملغي',
+};
+
+export const SUB_WO_STATUS_COLORS: Record<SubWorkOrderStatus, string> = {
+  PENDING: 'bg-slate-100 text-slate-600 border-slate-200',
+  IN_PROGRESS: 'bg-amber-100 text-amber-700 border-amber-200',
+  COMPLETED: 'bg-emerald-100 text-emerald-700 border-emerald-200',
+  ON_HOLD: 'bg-orange-100 text-orange-700 border-orange-200',
+  CANCELLED: 'bg-red-100 text-red-700 border-red-200',
+};
+
+export const QUALITY_GATE_LABELS: Record<QualityGateStatus, string> = {
+  PENDING: 'بانتظار الجودة',
+  PASSED: 'مقبول',
+  FAILED: 'مرفوض',
+  REWORK: 'إعادة عمل',
+};
+
+export const QUALITY_GATE_COLORS: Record<QualityGateStatus, string> = {
+  PENDING: 'bg-amber-100 text-amber-700 border-amber-200',
+  PASSED: 'bg-emerald-100 text-emerald-700 border-emerald-200',
+  FAILED: 'bg-red-100 text-red-700 border-red-200',
+  REWORK: 'bg-orange-100 text-orange-700 border-orange-200',
+};

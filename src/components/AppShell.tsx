@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { Sidebar } from '@/components/layout/Sidebar';
 import { TopBar } from '@/components/layout/TopBar';
 import { MobileNav } from '@/components/layout/MobileNav';
@@ -7,6 +7,7 @@ import { getNavItem } from '@/lib/navigation';
 import { MODULE_ACCESS } from '@/lib/roles';
 import { EmptyState } from '@/components/ui/EmptyState';
 import { ShieldX } from 'lucide-react';
+import { fetchModuleSettings, isModuleEnabled, type ModuleSetting } from '@/lib/moduleSettings';
 import type { ModuleKey } from '@/types';
 
 interface AppShellProps {
@@ -18,12 +19,18 @@ interface AppShellProps {
 export function AppShell({ activeModule, onNavigate, userRole }: AppShellProps) {
   const [collapsed, setCollapsed] = useState(false);
   const [mobileNavOpen, setMobileNavOpen] = useState(false);
+  const [moduleSettings, setModuleSettings] = useState<ModuleSetting[] | null>(null);
+
+  useEffect(() => {
+    fetchModuleSettings().then(setModuleSettings).catch(() => setModuleSettings(null));
+  }, []);
 
   const navItem = getNavItem(activeModule);
   const breadcrumb = ['الرئيسية', navItem?.label ?? ''];
   const allowedModules = MODULE_ACCESS[userRole as keyof typeof MODULE_ACCESS] ?? [];
 
   const hasAccess = allowedModules.includes(activeModule);
+  const moduleEnabled = isModuleEnabled(moduleSettings, activeModule);
 
   return (
     <div className="flex h-screen bg-slate-50 overflow-hidden" dir="rtl">
@@ -33,6 +40,7 @@ export function AppShell({ activeModule, onNavigate, userRole }: AppShellProps) 
         userRole={userRole as never}
         collapsed={collapsed}
         onToggleCollapse={() => setCollapsed(!collapsed)}
+        moduleSettings={moduleSettings}
       />
 
       <MobileNav
@@ -41,6 +49,7 @@ export function AppShell({ activeModule, onNavigate, userRole }: AppShellProps) 
         activeModule={activeModule}
         onNavigate={onNavigate}
         userRole={userRole as never}
+        moduleSettings={moduleSettings}
       />
 
       <div className="flex-1 flex flex-col min-w-0">
@@ -50,8 +59,16 @@ export function AppShell({ activeModule, onNavigate, userRole }: AppShellProps) 
         />
 
         <main className="flex-1 overflow-y-auto p-4 lg:p-6">
-          {hasAccess ? (
+          {hasAccess && moduleEnabled ? (
             <PageRouter module={activeModule} />
+          ) : !moduleEnabled ? (
+            <div className="bg-white rounded-xl border border-slate-200 shadow-sm">
+              <EmptyState
+                icon={<ShieldX className="w-7 h-7" />}
+                title="هذه الوحدة متوقفة"
+                description="يمكنك تفعيل هذه الوحدة من صفحة الإعدادات → تفعيل وإيقاف الوحدات."
+              />
+            </div>
           ) : (
             <div className="bg-white rounded-xl border border-slate-200 shadow-sm">
               <EmptyState
