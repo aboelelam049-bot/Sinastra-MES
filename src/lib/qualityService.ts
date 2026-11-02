@@ -95,8 +95,7 @@ export async function fetchInspectionLots(status?: string): Promise<InspectionLo
       parent_batch:parent_batches(id, batch_number),
       final_stage:routing_stages!inspection_lots_final_stage_id_fkey(id, stage_code, stage_name),
       product_model:product_models(id, model_code, name),
-      item:item_master!inspection_lots_item_id_fkey(id, item_code, name),
-      created_by_profile:profiles!inspection_lots_created_by_fkey(id, full_name)
+      item:item_master!inspection_lots_item_id_fkey(id, item_code, name)
     `)
     .order('created_at', { ascending: false });
   if (status) query = query.eq('status', status);
@@ -113,8 +112,7 @@ export async function fetchInspectionLot(id: string): Promise<InspectionLotWithR
       parent_batch:parent_batches(id, batch_number),
       final_stage:routing_stages!inspection_lots_final_stage_id_fkey(id, stage_code, stage_name),
       product_model:product_models(id, model_code, name),
-      item:item_master!inspection_lots_item_id_fkey(id, item_code, name),
-      created_by_profile:profiles!inspection_lots_created_by_fkey(id, full_name)
+      item:item_master!inspection_lots_item_id_fkey(id, item_code, name)
     `)
     .eq('id', id)
     .maybeSingle();
@@ -158,7 +156,6 @@ export async function fetchInspectionResults(lotId: string): Promise<InspectionR
   const { data, error } = await supabase
     .from('inspection_results')
     .select(`*,
-      inspector:profiles!inspection_results_inspector_id_fkey(id, full_name),
       defects:inspection_defects(*, defect:defect_master(*))
     `)
     .eq('inspection_lot_id', lotId)
@@ -221,9 +218,7 @@ export async function addInspectionDefect(fields: {
 export async function fetchApprovals(lotId?: string): Promise<QualityApproval[]> {
   let query = supabase
     .from('quality_approvals')
-    .select(`*,
-      approver:profiles!quality_approvals_approver_id_fkey(id, full_name)
-    `)
+    .select('*')
     .order('approval_timestamp', { ascending: false });
   if (lotId) query = query.eq('inspection_lot_id', lotId);
   const { data, error } = await query;
@@ -304,8 +299,7 @@ export async function fetchQualityCards(): Promise<QualityCardWithRelations[]> {
   const { data, error } = await supabase
     .from('quality_cards')
     .select(`*,
-      inspection_lot:inspection_lots(id, lot_number),
-      approver:profiles!quality_cards_approver_id_fkey(id, full_name)
+      inspection_lot:inspection_lots(id, lot_number)
     `)
     .order('created_at', { ascending: false });
   if (error) throw error;
@@ -315,7 +309,7 @@ export async function fetchQualityCards(): Promise<QualityCardWithRelations[]> {
 export async function fetchQualityCardPrints(cardId: string): Promise<QualityCardPrint[]> {
   const { data, error } = await supabase
     .from('quality_card_prints')
-    .select('*, printed_by_profile:profiles!quality_card_prints_printed_by_fkey(id, full_name)')
+    .select('*')
     .eq('quality_card_id', cardId)
     .order('printed_at', { ascending: false });
   if (error) throw error;
