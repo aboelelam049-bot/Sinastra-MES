@@ -602,8 +602,8 @@ function MonthlyPlanDetail({ planId, onBack }: { planId: string; onBack: () => v
                 <th className="text-right px-4 py-2.5 font-medium text-slate-600 w-12">#</th>
                 <th className="text-right px-4 py-2.5 font-medium text-slate-600">الموديل</th>
                 <th className="text-right px-4 py-2.5 font-medium text-slate-600">الكمية</th>
-                <th className="text-right px-4 py-2.5 font-medium text-slate-600 hidden md:table-cell">البداية</th>
-                <th className="text-right px-4 py-2.5 font-medium text-slate-600 hidden md:table-cell">النهاية</th>
+                <th className="text-right px-4 py-2.5 font-medium text-slate-600">البداية المخططة</th>
+                <th className="text-right px-4 py-2.5 font-medium text-slate-600">النهاية المخططة</th>
                 <th className="text-right px-4 py-2.5 font-medium text-slate-600">أمر الشغل</th>
                 <th className="px-4 py-2.5"></th>
               </tr>
@@ -625,13 +625,13 @@ function MonthlyPlanDetail({ planId, onBack }: { planId: string; onBack: () => v
                       <span className="font-medium text-slate-700" dir="ltr">{item.planned_quantity}</span>
                     )}
                   </td>
-                  <td className="px-4 py-2.5 hidden md:table-cell">
+                  <td className="px-4 py-2.5">
                     {canEdit ? (
                       <input type="date" value={item.planned_start_date ?? ''} onChange={async (e) => { await updateMonthlyPlanItem(item.id, { planned_start_date: e.target.value || null }); load(); }}
                         className="px-2 py-1 text-xs border border-slate-200 rounded focus:outline-none focus:ring-1 focus:ring-amber-500" />
                     ) : <span className="text-xs text-slate-500" dir="ltr">{item.planned_start_date ?? '—'}</span>}
                   </td>
-                  <td className="px-4 py-2.5 hidden md:table-cell">
+                  <td className="px-4 py-2.5">
                     {canEdit ? (
                       <input type="date" value={item.planned_end_date ?? ''} onChange={async (e) => { await updateMonthlyPlanItem(item.id, { planned_end_date: e.target.value || null }); load(); }}
                         className="px-2 py-1 text-xs border border-slate-200 rounded focus:outline-none focus:ring-1 focus:ring-amber-500" />
