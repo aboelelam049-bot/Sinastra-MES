@@ -2,7 +2,8 @@ import { supabase } from '@/lib/supabase';
 import type {
   ProductModel, Machine, ItemMaster, WorkOrder, QualityGateStatus,
   MasterPlan, MasterPlanItem, MonthlyPlan, MonthlyPlanItem,
-  SubWorkOrder, ScrapRecord, OeeSnapshot,
+  SubWorkOrder, SubWorkOrderMaterial, WorkOrderCostSummary,
+  ScrapRecord, OeeSnapshot,
 } from '@/types';
 
 // ============================================================
@@ -35,6 +36,7 @@ export type SubWorkOrderWithRelations = SubWorkOrder & {
   machine: Pick<Machine, 'id' | 'name' | 'machine_code'> | null;
   material_item: Pick<ItemMaster, 'id' | 'name' | 'item_code' | 'unit_of_measure' | 'is_raw_material' | 'material_classification'> | null;
   work_order?: { wo_number: string } | null;
+  materials: SubWorkOrderMaterial[] | null;
 };
 
 export interface OeeResult {
@@ -268,7 +270,8 @@ export async function fetchSubWorkOrders(woId: string): Promise<SubWorkOrderWith
     .select(`
       *,
       machine:machines(id, name, machine_code),
-      material_item:item_master(id, name, item_code, unit_of_measure, is_raw_material, material_classification)
+      material_item:item_master(id, name, item_code, unit_of_measure, is_raw_material, material_classification),
+      materials:sub_work_order_materials(*)
     `)
     .eq('work_order_id', woId)
     .order('sequence_number', { ascending: true });
@@ -301,10 +304,14 @@ export async function completeSubWorkOrder(fields: {
   scrap_qty: number;
   reject_qty: number;
   labor_count?: number;
-  material_item_id?: string;
-  material_qty?: number;
-  material_unit?: string;
   notes?: string;
+  materials?: Array<{
+    item_id: string;
+    item_code: string;
+    consumed_qty: number;
+    unit_of_measure: string;
+    unit_cost?: number;
+  }>;
 }): Promise<void> {
   const now = new Date().toISOString();
   const update: Record<string, unknown> = {
@@ -316,13 +323,28 @@ export async function completeSubWorkOrder(fields: {
     updated_at: now,
   };
   if (fields.labor_count !== undefined) update.labor_count = fields.labor_count;
-  if (fields.material_item_id !== undefined) update.material_item_id = fields.material_item_id ?? null;
-  if (fields.material_qty !== undefined) update.material_qty = fields.material_qty;
-  if (fields.material_unit !== undefined) update.material_unit = fields.material_unit;
   if (fields.notes !== undefined) update.notes = fields.notes;
 
   const { error } = await supabase.from('sub_work_orders').update(update).eq('id', fields.sub_wo_id);
   if (error) throw error;
+
+  // Save multi-material consumption
+  if (fields.materials && fields.materials.length > 0) {
+    // Remove existing materials for this sub-WO
+    await supabase.from('sub_work_order_materials').delete().eq('sub_work_order_id', fields.sub_wo_id);
+    // Insert new materials
+    const materialRows = fields.materials.map(m => ({
+      sub_work_order_id: fields.sub_wo_id,
+      item_id: m.item_id,
+      item_code: m.item_code,
+      consumed_qty: m.consumed_qty,
+      unit_of_measure: m.unit_of_measure,
+      unit_cost: m.unit_cost ?? 0,
+      total_cost: (m.unit_cost ?? 0) * m.consumed_qty,
+    }));
+    const { error: matError } = await supabase.from('sub_work_order_materials').insert(materialRows);
+    if (matError) throw matError;
+  }
 
   // Update parent WO actual_quantity (sum of good)
   const { data: sub } = await supabase.from('sub_work_orders').select('work_order_id').eq('id', fields.sub_wo_id).single();
@@ -336,6 +358,9 @@ export async function completeSubWorkOrder(fields: {
       .from('work_orders')
       .update({ actual_quantity: totalGood, actual_end_time: now, updated_at: now })
       .eq('id', sub.work_order_id);
+
+    // Recalculate cost after completion
+    await supabase.rpc('get_work_order_cost_summary', { p_wo_id: sub.work_order_id });
   }
 }
 
@@ -456,6 +481,24 @@ export async function fetchAllOeeSnapshots(): Promise<(OeeSnapshot & { work_orde
     .order('computed_at', { ascending: false });
   if (error) throw error;
   return (data ?? []) as unknown as (OeeSnapshot & { work_order?: { id: string; wo_number: string; model?: { name: string } } })[];
+}
+
+// ============================================================
+// Work Order Cost
+// ============================================================
+
+export async function getWorkOrderCostSummary(woId: string): Promise<WorkOrderCostSummary> {
+  const { data, error } = await supabase.rpc('get_work_order_cost_summary', { p_wo_id: woId });
+  if (error) throw error;
+  const d = data as unknown as WorkOrderCostSummary;
+  return {
+    material_cost: Number(d.material_cost ?? 0),
+    labor_cost: Number(d.labor_cost ?? 0),
+    overhead_cost: Number(d.overhead_cost ?? 0),
+    total_cost: Number(d.total_cost ?? 0),
+    material_count: Number(d.material_count ?? 0),
+    materials: d.materials ?? [],
+  };
 }
 
 // ============================================================

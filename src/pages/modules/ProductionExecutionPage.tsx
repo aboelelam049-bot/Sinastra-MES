@@ -15,7 +15,7 @@ import {
   startSubWorkOrder, completeSubWorkOrder, assignSubWorkOrderMachine,
   setSubWorkOrderQuality, setWorkOrderQuality, transferToWarehouse,
   fetchScrapRecords, addScrapRecord, computeOee, fetchOeeSnapshot,
-  fetchMesDashboard, fetchAllOeeSnapshots,
+  fetchMesDashboard, fetchAllOeeSnapshots, getWorkOrderCostSummary,
   type SimplifiedWorkOrder, type SubWorkOrderWithRelations, type OeeResult,
 } from '@/lib/mesService';
 import { fetchMachines } from '@/lib/machineService';
@@ -27,7 +27,27 @@ import {
   SUB_WO_STATUS_LABELS, SUB_WO_STATUS_COLORS,
   QUALITY_GATE_LABELS, QUALITY_GATE_COLORS,
 } from '@/lib/statusLabels';
-import type { Machine, QualityGateStatus, DefectMaster, ItemMaster, OeeSnapshot } from '@/types';
+import type { Machine, QualityGateStatus, DefectMaster, ItemMaster, OeeSnapshot, WorkOrderCostSummary } from '@/types';
+
+const COMPONENT_LABELS: Record<string, string> = {
+  LENGTH: 'طول',
+  FRONT: 'وش رئيسي',
+  BACK: 'ضهر رئيسي',
+  FRONT_MAIN: 'وش رئيسي',
+  FRONT_SUB: 'وش فرعي',
+  BACK_MAIN: 'ضهر رئيسي',
+  BACK_SUB: 'ضهر فرعي',
+};
+
+const COMPONENT_COLORS: Record<string, string> = {
+  LENGTH: 'bg-blue-100 text-blue-700 border-blue-200',
+  FRONT: 'bg-emerald-100 text-emerald-700 border-emerald-200',
+  BACK: 'bg-amber-100 text-amber-700 border-amber-200',
+  FRONT_MAIN: 'bg-emerald-100 text-emerald-700 border-emerald-200',
+  FRONT_SUB: 'bg-teal-100 text-teal-700 border-teal-200',
+  BACK_MAIN: 'bg-amber-100 text-amber-700 border-amber-200',
+  BACK_SUB: 'bg-orange-100 text-orange-700 border-orange-200',
+};
 
 export function ProductionExecutionPage() {
   const [tab, setTab] = useState<'machines' | 'orders' | 'dashboard'>('machines');
@@ -299,6 +319,7 @@ function WorkOrderDetail({ woId, onBack }: { woId: string; onBack: () => void })
   const [scrapTarget, setScrapTarget] = useState<SubWorkOrderWithRelations | null>(null);
   const [qualityTarget, setQualityTarget] = useState<{ swo: SubWorkOrderWithRelations | null; wo: SimplifiedWorkOrder | null } | null>(null);
   const [warehouseTarget, setWarehouseTarget] = useState<SimplifiedWorkOrder | null>(null);
+  const [costSummary, setCostSummary] = useState<WorkOrderCostSummary | null>(null);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -314,6 +335,7 @@ function WorkOrderDetail({ woId, onBack }: { woId: string; onBack: () => void })
       ]);
       setWo(w); setSubWos(subs); setScrap(scraps); setMachines(mc); setDefects(df); setItems(its);
       try { setOee(await computeOee(woId)); } catch { /* OEE optional */ }
+      try { setCostSummary(await getWorkOrderCostSummary(woId)); } catch { /* cost optional */ }
     } catch (err) {
       setError(err instanceof Error ? err.message : 'حدث خطأ');
     } finally {
@@ -362,6 +384,7 @@ function WorkOrderDetail({ woId, onBack }: { woId: string; onBack: () => void })
       </div>
 
       {oee && <OeeCard oee={oee} />}
+      {costSummary && <CostCard summary={costSummary} />}
 
       <div className="bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden mb-4">
         <div className="px-4 py-3 border-b border-slate-100"><h3 className="text-sm font-semibold text-slate-700">أوامر الشغل الفرعية ({subWos.length})</h3></div>
@@ -371,6 +394,7 @@ function WorkOrderDetail({ woId, onBack }: { woId: string; onBack: () => void })
               <tr>
                 <th className="text-right px-3 py-2.5 font-medium text-slate-600 w-10">#</th>
                 <th className="text-right px-3 py-2.5 font-medium text-slate-600">المرحلة</th>
+                <th className="text-right px-3 py-2.5 font-medium text-slate-600 hidden sm:table-cell">الجزء</th>
                 <th className="text-right px-3 py-2.5 font-medium text-slate-600 hidden sm:table-cell">الماكينة</th>
                 <th className="text-right px-3 py-2.5 font-medium text-slate-600">الكمية</th>
                 <th className="text-right px-3 py-2.5 font-medium text-slate-600 hidden sm:table-cell">الإسكراب</th>
@@ -385,6 +409,7 @@ function WorkOrderDetail({ woId, onBack }: { woId: string; onBack: () => void })
                 <tr key={swo.id} className="hover:bg-slate-50">
                   <td className="px-3 py-2.5 font-mono text-xs text-slate-500">{swo.sequence_number}</td>
                   <td className="px-3 py-2.5 font-medium text-slate-700">{swo.stage_name}</td>
+                  <td className="px-3 py-2.5 hidden sm:table-cell">{swo.component_type && <span className={`inline-block px-2 py-0.5 text-xs rounded-full border ${COMPONENT_COLORS[swo.component_type] ?? 'bg-slate-100 text-slate-600 border-slate-200'}`}>{COMPONENT_LABELS[swo.component_type] ?? swo.component_type}</span>}</td>
                   <td className="px-3 py-2.5 hidden sm:table-cell">
                     <select value={swo.machine_id ?? ''} disabled={swo.status === 'COMPLETED'} onChange={(e) => handleAssignMachine(swo.id, e.target.value || null, load, setError)}
                       className="text-xs border border-slate-200 rounded px-2 py-1 focus:outline-none focus:ring-1 focus:ring-amber-500 disabled:bg-slate-50">
@@ -444,61 +469,127 @@ function WorkOrderDetail({ woId, onBack }: { woId: string; onBack: () => void })
 // Complete Modal — with labor, material, scrap, time
 // ============================================================
 
+interface MaterialEntry {
+  item_id: string;
+  item_code: string;
+  consumed_qty: string;
+  unit_of_measure: string;
+  unit_cost: string;
+}
+
 function CompleteModal({ swo, items, onClose, onDone }: { swo: SubWorkOrderWithRelations; items: ItemMaster[]; onClose: () => void; onDone: () => void }) {
   const [good, setGood] = useState(String(swo.planned_quantity));
   const [scrap, setScrap] = useState('0');
   const [reject, setReject] = useState('0');
   const [labor, setLabor] = useState(String(swo.labor_count || '1'));
-  const [materialId, setMaterialId] = useState(swo.material_item_id ?? '');
-  const [materialQty, setMaterialQty] = useState(String(swo.material_qty || ''));
   const [notes, setNotes] = useState('');
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [materials, setMaterials] = useState<MaterialEntry[]>(
+    (swo.materials ?? []).map(m => ({
+      item_id: m.item_id,
+      item_code: m.item_code,
+      consumed_qty: String(m.consumed_qty),
+      unit_of_measure: m.unit_of_measure,
+      unit_cost: String(m.unit_cost ?? 0),
+    }))
+  );
 
   const rawMaterials = items.filter(i => i.is_raw_material);
-  const components = items.filter(i => !i.is_raw_material);
+
+  function addMaterial() {
+    setMaterials(prev => [...prev, { item_id: '', item_code: '', consumed_qty: '', unit_of_measure: 'PCS', unit_cost: '0' }]);
+  }
+
+  function updateMaterial(idx: number, field: keyof MaterialEntry, value: string) {
+    setMaterials(prev => prev.map((m, i) => {
+      if (i !== idx) return m;
+      const updated = { ...m, [field]: value };
+      if (field === 'item_id') {
+        const item = items.find(it => it.id === value);
+        if (item) {
+          updated.item_code = item.item_code;
+          updated.unit_of_measure = item.unit_of_measure;
+        }
+      }
+      return updated;
+    }));
+  }
+
+  function removeMaterial(idx: number) {
+    setMaterials(prev => prev.filter((_, i) => i !== idx));
+  }
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
     setLoading(true); setError(null);
     try {
+      const validMaterials = materials
+        .filter(m => m.item_id && Number(m.consumed_qty) > 0)
+        .map(m => ({
+          item_id: m.item_id,
+          item_code: m.item_code,
+          consumed_qty: Number(m.consumed_qty),
+          unit_of_measure: m.unit_of_measure,
+          unit_cost: Number(m.unit_cost) || 0,
+        }));
       await completeSubWorkOrder({
         sub_wo_id: swo.id,
         good_qty: Number(good), scrap_qty: Number(scrap), reject_qty: Number(reject),
         labor_count: Number(labor) || 0,
-        material_item_id: materialId || undefined,
-        material_qty: materialId ? Number(materialQty) || 0 : undefined,
-        material_unit: materialId ? items.find(i => i.id === materialId)?.unit_of_measure : undefined,
         notes: notes || undefined,
+        materials: validMaterials.length > 0 ? validMaterials : undefined,
       });
       onDone();
     } catch (err) { setError(err instanceof Error ? err.message : 'حدث خطأ'); }
     finally { setLoading(false); }
   }
 
+  const componentLabel = swo.component_type ? COMPONENT_LABELS[swo.component_type] ?? swo.component_type : null;
+
   return (
-    <Modal open title={`إنهاء: ${swo.stage_name}`} onClose={onClose} maxWidth="max-w-lg">
+    <Modal open title={`إنهاء: ${swo.stage_name}${componentLabel ? ' — ' + componentLabel : ''}`} onClose={onClose} maxWidth="max-w-2xl">
       <form onSubmit={handleSubmit} className="space-y-4">
         <div className="grid grid-cols-3 gap-3">
           <div><label className="block text-xs font-medium text-slate-600 mb-1">صالح</label><input type="number" min="0" value={good} onChange={e => setGood(e.target.value)} required className="w-full px-3 py-2 text-sm border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-emerald-500" /></div>
           <div><label className="block text-xs font-medium text-slate-600 mb-1">إسكراب</label><input type="number" min="0" value={scrap} onChange={e => setScrap(e.target.value)} className="w-full px-3 py-2 text-sm border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-red-500" /></div>
           <div><label className="block text-xs font-medium text-slate-600 mb-1">مرفوض</label><input type="number" min="0" value={reject} onChange={e => setReject(e.target.value)} className="w-full px-3 py-2 text-sm border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-amber-500" /></div>
         </div>
-        <div className="grid grid-cols-2 gap-3">
-          <div><label className="block text-xs font-medium text-slate-600 mb-1 flex items-center gap-1"><Users className="w-3 h-3" /> عدد العمالة</label><input type="number" min="0" value={labor} onChange={e => setLabor(e.target.value)} className="w-full px-3 py-2 text-sm border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-amber-500" /></div>
-        </div>
-        {rawMaterials.length > 0 && (
-          <div>
-            <label className="block text-xs font-medium text-slate-600 mb-1 flex items-center gap-1"><Package className="w-3 h-3" /> الخامة المستخدمة</label>
-            <select value={materialId} onChange={e => setMaterialId(e.target.value)} className="w-full px-3 py-2 text-sm border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-amber-500">
-              <option value="">— بدون —</option>
-              {rawMaterials.map(i => <option key={i.id} value={i.id}>{i.name} ({i.item_code})</option>)}
-            </select>
+        <div><label className="block text-xs font-medium text-slate-600 mb-1 flex items-center gap-1"><Users className="w-3 h-3" /> عدد العمالة</label><input type="number" min="0" value={labor} onChange={e => setLabor(e.target.value)} className="w-full px-3 py-2 text-sm border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-amber-500" /></div>
+
+        {/* Multi-material consumption */}
+        <div>
+          <div className="flex items-center justify-between mb-2">
+            <label className="text-xs font-medium text-slate-600 flex items-center gap-1"><Package className="w-3 h-3" /> الخامات المستخدمة في هذه المرحلة</label>
+            {rawMaterials.length > 0 && <button type="button" onClick={addMaterial} className="text-xs text-amber-600 hover:text-amber-700 font-medium">+ إضافة خامة</button>}
           </div>
-        )}
-        {materialId && <div><label className="block text-xs font-medium text-slate-600 mb-1">كمية الخامة</label><input type="number" min="0" step="0.01" value={materialQty} onChange={e => setMaterialQty(e.target.value)} className="w-full px-3 py-2 text-sm border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-amber-500" /></div>}
+          {materials.length === 0 ? (
+            <div className="text-xs text-slate-400 bg-slate-50 border border-slate-100 rounded-lg px-3 py-2">لم يتم إضافة خامات. اضغط "إضافة خامة" لتسجيل الخامات المصروف فعلياً.</div>
+          ) : (
+            <div className="space-y-2">
+              {materials.map((m, idx) => (
+                <div key={idx} className="grid grid-cols-12 gap-2 items-start">
+                  <div className="col-span-5">
+                    <select value={m.item_id} onChange={e => updateMaterial(idx, 'item_id', e.target.value)} className="w-full px-2 py-1.5 text-xs border border-slate-300 rounded focus:outline-none focus:ring-1 focus:ring-amber-500">
+                      <option value="">— اختر خامة —</option>
+                      {rawMaterials.map(i => <option key={i.id} value={i.id}>{i.name} ({i.item_code})</option>)}
+                    </select>
+                  </div>
+                  <div className="col-span-3"><input type="number" min="0" step="0.01" placeholder="الكمية" value={m.consumed_qty} onChange={e => updateMaterial(idx, 'consumed_qty', e.target.value)} className="w-full px-2 py-1.5 text-xs border border-slate-300 rounded focus:outline-none focus:ring-1 focus:ring-amber-500" /></div>
+                  <div className="col-span-2"><input type="number" min="0" step="0.01" placeholder="تكلفة الوحدة" value={m.unit_cost} onChange={e => updateMaterial(idx, 'unit_cost', e.target.value)} className="w-full px-2 py-1.5 text-xs border border-slate-300 rounded focus:outline-none focus:ring-1 focus:ring-amber-500" /></div>
+                  <div className="col-span-1 text-xs text-slate-400 py-1.5 text-center">{m.unit_of_measure}</div>
+                  <div className="col-span-1"><button type="button" onClick={() => removeMaterial(idx)} className="p-1 text-red-500 hover:bg-red-50 rounded w-full"><Trash2 className="w-3.5 h-3.5 mx-auto" /></button></div>
+                </div>
+              ))}
+              <div className="text-xs text-slate-500 bg-amber-50 border border-amber-100 rounded-lg px-3 py-1.5">
+                إجمالي تكلفة الخامات لهذه المرحلة: <span className="font-medium text-amber-700" dir="ltr">{materials.reduce((s, m) => s + (Number(m.consumed_qty) || 0) * (Number(m.unit_cost) || 0), 0).toFixed(2)}</span>
+              </div>
+            </div>
+          )}
+        </div>
+
         <div><label className="block text-xs font-medium text-slate-600 mb-1">ملاحظات</label><input value={notes} onChange={e => setNotes(e.target.value)} className="w-full px-3 py-2 text-sm border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-amber-500" /></div>
-        <div className="text-xs text-slate-500 bg-blue-50 border border-blue-100 rounded-lg px-3 py-2 flex items-center gap-1"><Clock className="w-3 h-3" /> وقت البداية والنهاية يسجل تلقائياً</div>
+        <div className="text-xs text-slate-500 bg-blue-50 border border-blue-100 rounded-lg px-3 py-2 flex items-center gap-1"><Clock className="w-3 h-3" /> وقت البداية والنهاية يسجل تلقائياً — الخامات والتكلفة تُحفظ في تكلفة أمر الشغل</div>
         {error && <div className="text-sm text-red-600 bg-red-50 border border-red-100 rounded-lg px-3 py-2">{error}</div>}
         <div className="flex gap-2 pt-1">
           <Button type="submit" disabled={loading}>{loading ? <Loader2 className="w-4 h-4 animate-spin" /> : <CheckCircle2 className="w-4 h-4" />} إنهاء واعتماد</Button>
@@ -638,6 +729,36 @@ function OeeDashboardTab() {
 
 function Stat({ label, value, color, small }: { label: string; value: string; color?: string; small?: boolean }) {
   return <div><div className={`text-xs text-slate-500 ${small ? 'mb-0.5' : 'mb-1'}`}>{label}</div><div className={`${small ? 'text-sm' : 'text-lg font-semibold'} ${color ?? 'text-slate-800'}`} dir="ltr">{value}</div></div>;
+}
+
+function CostCard({ summary }: { summary: WorkOrderCostSummary }) {
+  return (
+    <div className="bg-white rounded-xl border border-slate-200 shadow-sm p-5 mb-4">
+      <h3 className="text-sm font-semibold text-slate-700 mb-3 flex items-center gap-1"><Package className="w-4 h-4 text-amber-500" /> تكلفة أمر الشغل</h3>
+      <div className="grid grid-cols-3 gap-3">
+        <div className="text-center"><div className="text-xs text-slate-500 mb-1">تكلفة الخامات</div><div className="text-xl font-bold text-amber-600" dir="ltr">{Number(summary.material_cost).toFixed(2)}</div></div>
+        <div className="text-center"><div className="text-xs text-slate-500 mb-1">تكلفة العمالة</div><div className="text-xl font-bold text-blue-600" dir="ltr">{Number(summary.labor_cost).toFixed(2)}</div></div>
+        <div className="text-center border-r border-slate-100 pr-3"><div className="text-xs text-slate-500 mb-1">إجمالي التكلفة</div><div className="text-2xl font-bold text-slate-800" dir="ltr">{Number(summary.total_cost).toFixed(2)}</div></div>
+      </div>
+      {summary.materials.length > 0 && (
+        <div className="mt-3 pt-3 border-t border-slate-100">
+          <div className="text-xs text-slate-500 mb-2">تفاصيل الخامات المصروفة:</div>
+          <div className="space-y-1">
+            {summary.materials.map((m, i) => (
+              <div key={i} className="flex items-center justify-between text-xs">
+                <span className="text-slate-600">
+                  {m.component_type && <span className={`inline-block px-1.5 py-0.5 rounded-full border ${COMPONENT_COLORS[m.component_type] ?? 'bg-slate-100 text-slate-600 border-slate-200'} ml-1`}>{COMPONENT_LABELS[m.component_type] ?? m.component_type}</span>}
+                  <span className="font-mono" dir="ltr">{m.item_code}</span>
+                  {m.stage_name && <span className="text-slate-400"> — {m.stage_name}</span>}
+                </span>
+                <span className="text-slate-700" dir="ltr">{Number(m.consumed_qty)} × {Number(m.unit_cost).toFixed(2)} = <span className="font-medium text-amber-700">{Number(m.total_cost).toFixed(2)}</span></span>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+    </div>
+  );
 }
 
 function OeeCard({ oee }: { oee: OeeResult }) {

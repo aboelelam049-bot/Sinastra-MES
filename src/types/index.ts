@@ -959,8 +959,38 @@ export interface SubWorkOrder {
   material_qty: number;
   material_unit: string;
   notes: string | null;
+  component_type: string | null;
+  parent_sub_wo_id: string | null;
   created_at: string;
   updated_at: string;
+}
+
+export interface SubWorkOrderMaterial {
+  id: string;
+  sub_work_order_id: string;
+  item_id: string;
+  item_code: string;
+  consumed_qty: number;
+  unit_of_measure: string;
+  unit_cost: number;
+  total_cost: number;
+  created_at: string;
+}
+
+export interface WorkOrderCostSummary {
+  material_cost: number;
+  labor_cost: number;
+  overhead_cost: number;
+  total_cost: number;
+  material_count: number;
+  materials: Array<{
+    item_code: string;
+    consumed_qty: number;
+    unit_cost: number;
+    total_cost: number;
+    component_type: string | null;
+    stage_name: string | null;
+  }>;
 }
 
 export interface ScrapRecord {
