@@ -662,8 +662,8 @@ function MonthlyPlanDetail({ planId, onBack }: { planId: string; onBack: () => v
       </div>
 
       <ConfirmDialog open={approveTarget} title="اعتماد الخطة الشهرية"
-        message="بعد الاعتماد يمكن توليد أوامر الشغل لكل موديل. لن يمكن تعديل الكميات."
-        confirmLabel="اعتماد" onConfirm={async () => { try { await approveMonthlyPlan(planId); setApproveTarget(false); load(); } catch (e) { setError(e instanceof Error ? e.message : 'خطأ'); setApproveTarget(false); } }}
+        message="بعد الاعتماد سيتم توليد أوامر الشغل تلقائياً لكل موديل. لن يمكن تعديل الكميات."
+        confirmLabel="اعتماد وتوليد أوامر الشغل" onConfirm={async () => { try { const count = await approveMonthlyPlan(planId); setApproveTarget(false); load(); if (count > 0) setError(`تم توليد ${count} أمر شغل تلقائياً`); } catch (e) { setError(e instanceof Error ? e.message : 'خطأ'); setApproveTarget(false); } }}
         onCancel={() => setApproveTarget(false)} />
       <ConfirmDialog open={!!genWoTarget} title="توليد أمر شغل"
         message={`سيتم إنشاء أمر شغل وأوامر فرعية لكل مراحل التشغيل للموديل «${genWoTarget?.model?.name ?? ''}».`}

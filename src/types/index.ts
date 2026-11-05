@@ -626,6 +626,8 @@ export interface ItemMaster {
   thickness_mm: number | null;
   description: string | null;
   is_active: boolean;
+  is_raw_material: boolean;
+  material_classification: string;
   created_by: string | null;
   created_at: string;
   updated_at: string;

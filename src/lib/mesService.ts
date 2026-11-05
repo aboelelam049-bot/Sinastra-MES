@@ -33,7 +33,7 @@ export type SimplifiedWorkOrder = Pick<WorkOrder,
 
 export type SubWorkOrderWithRelations = SubWorkOrder & {
   machine: Pick<Machine, 'id' | 'name' | 'machine_code'> | null;
-  material_item: Pick<ItemMaster, 'id' | 'name' | 'item_code' | 'unit_of_measure'> | null;
+  material_item: Pick<ItemMaster, 'id' | 'name' | 'item_code' | 'unit_of_measure' | 'is_raw_material' | 'material_classification'> | null;
   work_order?: { wo_number: string } | null;
 };
 
@@ -142,7 +142,7 @@ export async function fetchMonthlyPlanItems(planId: string): Promise<(MonthlyPla
 })[]> {
   const { data, error } = await supabase
     .from('monthly_plan_items')
-    .select('*, model:product_models(*), work_order:work_orders(id, wo_number, status, quality_status, warehouse_transferred, planned_quantity, actual_quantity)')
+    .select('*, model:product_models(*), work_order:work_orders!monthly_plan_items_work_order_id_fkey(id, wo_number, status, quality_status, warehouse_transferred, planned_quantity, actual_quantity)')
     .eq('monthly_plan_id', planId)
     .order('sequence_order', { ascending: true });
   if (error) throw error;
@@ -170,13 +170,14 @@ export async function createMonthlyPlan(masterPlanId: string, name: string, plan
   return data as MonthlyPlan;
 }
 
-export async function approveMonthlyPlan(planId: string): Promise<void> {
+export async function approveMonthlyPlan(planId: string): Promise<number> {
   const { data: { user } } = await supabase.auth.getUser();
-  const { error } = await supabase
-    .from('monthly_plan')
-    .update({ status: 'APPROVED', approved_by: user?.id ?? null, approved_at: new Date().toISOString() })
-    .eq('id', planId);
+  const { data, error } = await supabase.rpc('approve_monthly_and_generate_wos', {
+    p_plan_id: planId,
+    p_approved_by: user?.id ?? null,
+  });
   if (error) throw error;
+  return data as number;
 }
 
 export async function copyMasterPlanItemsToMonthly(masterPlanId: string, monthlyPlanId: string): Promise<number> {
@@ -267,7 +268,7 @@ export async function fetchSubWorkOrders(woId: string): Promise<SubWorkOrderWith
     .select(`
       *,
       machine:machines(id, name, machine_code),
-      material_item:item_master(id, name, item_code, unit_of_measure)
+      material_item:item_master(id, name, item_code, unit_of_measure, is_raw_material, material_classification)
     `)
     .eq('work_order_id', woId)
     .order('sequence_number', { ascending: true });

@@ -95,7 +95,7 @@ function MachinesTab() {
       try {
         const { data } = await supabase
           .from('sub_work_orders')
-          .select(`*, machine:machines(id, name, machine_code), material_item:item_master(id, name, item_code, unit_of_measure), work_order:work_orders(id, wo_number, model:product_models(id, name, model_code))`)
+          .select(`*, machine:machines(id, name, machine_code), material_item:item_master(id, name, item_code, unit_of_measure, is_raw_material, material_classification), work_order:work_orders!sub_work_orders_work_order_id_fkey(id, wo_number, model:product_models(id, name, model_code))`)
           .eq('machine_id', machineId)
           .in('status', ['PENDING', 'IN_PROGRESS'])
           .order('sequence_number', { ascending: true });
@@ -455,6 +455,9 @@ function CompleteModal({ swo, items, onClose, onDone }: { swo: SubWorkOrderWithR
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
+  const rawMaterials = items.filter(i => i.is_raw_material);
+  const components = items.filter(i => !i.is_raw_material);
+
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
     setLoading(true); setError(null);
@@ -483,8 +486,16 @@ function CompleteModal({ swo, items, onClose, onDone }: { swo: SubWorkOrderWithR
         </div>
         <div className="grid grid-cols-2 gap-3">
           <div><label className="block text-xs font-medium text-slate-600 mb-1 flex items-center gap-1"><Users className="w-3 h-3" /> عدد العمالة</label><input type="number" min="0" value={labor} onChange={e => setLabor(e.target.value)} className="w-full px-3 py-2 text-sm border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-amber-500" /></div>
-          <div><label className="block text-xs font-medium text-slate-600 mb-1 flex items-center gap-1"><Package className="w-3 h-3" /> الخامة</label><select value={materialId} onChange={e => setMaterialId(e.target.value)} className="w-full px-3 py-2 text-sm border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-amber-500"><option value="">— بدون —</option>{items.map(i => <option key={i.id} value={i.id}>{i.name} ({i.item_code})</option>)}</select></div>
         </div>
+        {rawMaterials.length > 0 && (
+          <div>
+            <label className="block text-xs font-medium text-slate-600 mb-1 flex items-center gap-1"><Package className="w-3 h-3" /> الخامة المستخدمة</label>
+            <select value={materialId} onChange={e => setMaterialId(e.target.value)} className="w-full px-3 py-2 text-sm border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-amber-500">
+              <option value="">— بدون —</option>
+              {rawMaterials.map(i => <option key={i.id} value={i.id}>{i.name} ({i.item_code})</option>)}
+            </select>
+          </div>
+        )}
         {materialId && <div><label className="block text-xs font-medium text-slate-600 mb-1">كمية الخامة</label><input type="number" min="0" step="0.01" value={materialQty} onChange={e => setMaterialQty(e.target.value)} className="w-full px-3 py-2 text-sm border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-amber-500" /></div>}
         <div><label className="block text-xs font-medium text-slate-600 mb-1">ملاحظات</label><input value={notes} onChange={e => setNotes(e.target.value)} className="w-full px-3 py-2 text-sm border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-amber-500" /></div>
         <div className="text-xs text-slate-500 bg-blue-50 border border-blue-100 rounded-lg px-3 py-2 flex items-center gap-1"><Clock className="w-3 h-3" /> وقت البداية والنهاية يسجل تلقائياً</div>
