@@ -14,7 +14,7 @@ import {
   fetchMasterPlans, fetchMasterPlanItems, createMasterPlan, approveMasterPlan,
   addMasterPlanItem, deleteMasterPlanItem, updateMasterPlanItem,
   fetchMonthlyPlans, fetchMonthlyPlanItems, createMonthlyPlan, approveMonthlyPlan,
-  copyMasterPlanItemsToMonthly, updateMonthlyPlanItem, deleteMonthlyPlanItem,
+  copyMasterPlanItemsToMonthly, updateMonthlyPlanItem, deleteMonthlyPlanItem, addMonthlyPlanItem,
   generateWorkOrderForMonthlyItem,
 } from '@/lib/mesService';
 import { fetchProductModels } from '@/lib/masterDataService';
@@ -535,18 +535,24 @@ function CreateMonthlyPlanModal({ masterPlans, onClose, onCreated }: {
 function MonthlyPlanDetail({ planId, onBack }: { planId: string; onBack: () => void }) {
   const [plan, setPlan] = useState<MonthlyPlan | null>(null);
   const [items, setItems] = useState<MonthlyItemWithModel[]>([]);
+  const [models, setModels] = useState<ProductModel[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [approveTarget, setApproveTarget] = useState(false);
   const [genWoTarget, setGenWoTarget] = useState<MonthlyItemWithModel | null>(null);
+  const [showAdd, setShowAdd] = useState(false);
+  const [removeTarget, setRemoveTarget] = useState<MonthlyItemWithModel | null>(null);
 
   const load = useCallback(async () => {
     setLoading(true);
     setError(null);
     try {
-      const [allPlans, itemsData] = await Promise.all([fetchMonthlyPlans(), fetchMonthlyPlanItems(planId)]);
+      const [allPlans, itemsData, modelsData] = await Promise.all([
+        fetchMonthlyPlans(), fetchMonthlyPlanItems(planId), fetchProductModels(),
+      ]);
       setPlan(allPlans.find(p => p.id === planId) ?? null);
       setItems(itemsData);
+      setModels(modelsData.filter(m => m.is_active));
     } catch (err) {
       setError(err instanceof Error ? err.message : 'حدث خطأ');
     } finally {
@@ -590,11 +596,14 @@ function MonthlyPlanDetail({ planId, onBack }: { planId: string; onBack: () => v
       )}
 
       <div className="bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden">
-        <div className="px-4 py-3 border-b border-slate-100">
+        <div className="px-4 py-3 border-b border-slate-100 flex items-center justify-between">
           <h3 className="text-sm font-semibold text-slate-700 flex items-center gap-2"><ClipboardList className="w-4 h-4 text-slate-400" /> موديلات الخطة الشهرية</h3>
+          {canEdit && <Button size="sm" variant="secondary" onClick={() => setShowAdd(true)}><Plus className="w-3.5 h-3.5" /> إضافة موديل</Button>}
         </div>
         {items.length === 0 ? (
-          <div className="p-8 text-center text-sm text-slate-400">لا توجد موديلات.</div>
+          <div className="p-8 text-center text-sm text-slate-400">
+            {canEdit ? 'لا توجد موديلات. أضف موديل للبدء أو أنشئ الخطة من خطة ماستر معتمدة.' : 'لا توجد موديلات في هذه الخطة.'}
+          </div>
         ) : (
           <table className="w-full text-sm">
             <thead className="bg-slate-50 border-b border-slate-200">
@@ -606,6 +615,7 @@ function MonthlyPlanDetail({ planId, onBack }: { planId: string; onBack: () => v
                 <th className="text-right px-4 py-2.5 font-medium text-slate-600">النهاية المخططة</th>
                 <th className="text-right px-4 py-2.5 font-medium text-slate-600">أمر الشغل</th>
                 <th className="px-4 py-2.5"></th>
+                {canEdit && <th className="px-4 py-2.5"></th>}
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-50">
@@ -654,6 +664,11 @@ function MonthlyPlanDetail({ planId, onBack }: { planId: string; onBack: () => v
                       <Badge color={QUALITY_GATE_COLORS[item.work_order.quality_status]} variant="dot">{QUALITY_GATE_LABELS[item.work_order.quality_status]}</Badge>
                     )}
                   </td>
+                  {canEdit && (
+                    <td className="px-4 py-2.5">
+                      <button onClick={() => setRemoveTarget(item)} className="p-1 rounded text-red-400 hover:bg-red-50"><Trash2 className="w-4 h-4" /></button>
+                    </td>
+                  )}
                 </tr>
               ))}
             </tbody>
@@ -661,6 +676,7 @@ function MonthlyPlanDetail({ planId, onBack }: { planId: string; onBack: () => v
         )}
       </div>
 
+      {showAdd && <AddMonthlyItemModal planId={planId} models={models} existingItems={items} onClose={() => setShowAdd(false)} onAdded={() => { setShowAdd(false); load(); }} />}
       <ConfirmDialog open={approveTarget} title="اعتماد الخطة الشهرية"
         message="بعد الاعتماد سيتم توليد أوامر الشغل تلقائياً لكل موديل. لن يمكن تعديل الكميات."
         confirmLabel="اعتماد وتوليد أوامر الشغل" onConfirm={async () => { try { const count = await approveMonthlyPlan(planId); setApproveTarget(false); load(); if (count > 0) setError(`تم توليد ${count} أمر شغل تلقائياً`); } catch (e) { setError(e instanceof Error ? e.message : 'خطأ'); setApproveTarget(false); } }}
@@ -669,6 +685,88 @@ function MonthlyPlanDetail({ planId, onBack }: { planId: string; onBack: () => v
         message={`سيتم إنشاء أمر شغل وأوامر فرعية لكل مراحل التشغيل للموديل «${genWoTarget?.model?.name ?? ''}».`}
         confirmLabel="توليد" onConfirm={async () => { try { await generateWorkOrderForMonthlyItem(genWoTarget!.id); setGenWoTarget(null); load(); } catch (e) { setError(e instanceof Error ? e.message : 'خطأ'); setGenWoTarget(null); } }}
         onCancel={() => setGenWoTarget(null)} />
+      <ConfirmDialog open={!!removeTarget} title="حذف الموديل" message={`حذف «${removeTarget?.model?.name ?? ''}» من الخطة الشهرية؟`}
+        confirmLabel="حذف" variant="danger" onConfirm={async () => { try { await deleteMonthlyPlanItem(removeTarget!.id); setRemoveTarget(null); load(); } catch (e) { setError(e instanceof Error ? e.message : 'خطأ'); setRemoveTarget(null); } }}
+        onCancel={() => setRemoveTarget(null)} />
     </div>
+  );
+}
+
+function AddMonthlyItemModal({ planId, models, existingItems, onClose, onAdded }: {
+  planId: string; models: ProductModel[]; existingItems: MonthlyItemWithModel[]; onClose: () => void; onAdded: () => void;
+}) {
+  const existingModelIds = new Set(existingItems.map(i => i.product_model_id));
+  const availableModels = models.filter(m => !existingModelIds.has(m.id));
+  const [modelId, setModelId] = useState('');
+  const [qty, setQty] = useState('100');
+  const [seq, setSeq] = useState(String(existingItems.length + 1));
+  const [startDate, setStartDate] = useState('');
+  const [endDate, setEndDate] = useState('');
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  async function handleSubmit(e: React.FormEvent) {
+    e.preventDefault();
+    setLoading(true);
+    setError(null);
+    try {
+      await addMonthlyPlanItem({
+        monthly_plan_id: planId,
+        product_model_id: modelId,
+        sequence_order: Number(seq),
+        planned_quantity: Number(qty),
+        planned_start_date: startDate || null,
+        planned_end_date: endDate || null,
+      });
+      onAdded();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'حدث خطأ');
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  return (
+    <Modal open title="إضافة موديل للخطة الشهرية" onClose={onClose} maxWidth="max-w-md">
+      <form onSubmit={handleSubmit} className="space-y-4">
+        <Field label="الموديل">
+          <select value={modelId} onChange={e => setModelId(e.target.value)} required
+            className="w-full px-3 py-2.5 text-sm border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-amber-500">
+            <option value="">اختر موديل</option>
+            {availableModels.map(m => <option key={m.id} value={m.id}>{m.name} ({m.model_code}){m.kit_type === 'SINGLE' ? ' — سنجل' : m.kit_type === 'DOUBLE' ? ' — دابل' : ''}</option>)}
+          </select>
+        </Field>
+        <div className="grid grid-cols-2 gap-3">
+          <Field label="الترتيب">
+            <input type="number" min="1" value={seq} onChange={e => setSeq(e.target.value)} required
+              className="w-full px-3 py-2.5 text-sm border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-amber-500" />
+          </Field>
+          <Field label="الكمية المخططة">
+            <input type="number" min="1" value={qty} onChange={e => setQty(e.target.value)} required
+              className="w-full px-3 py-2.5 text-sm border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-amber-500" />
+          </Field>
+        </div>
+        <div className="grid grid-cols-2 gap-3">
+          <Field label="تاريخ البداية المخططة" hint="اختياري">
+            <input type="date" value={startDate} onChange={e => setStartDate(e.target.value)}
+              className="w-full px-3 py-2.5 text-sm border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-amber-500" />
+          </Field>
+          <Field label="تاريخ النهاية المخططة" hint="اختياري">
+            <input type="date" value={endDate} onChange={e => setEndDate(e.target.value)}
+              className="w-full px-3 py-2.5 text-sm border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-amber-500" />
+          </Field>
+        </div>
+        {availableModels.length === 0 && (
+          <div className="text-xs text-amber-600 bg-amber-50 border border-amber-100 rounded-lg px-3 py-2">كل الموديلات المفعلة مضافة بالفعل في هذه الخطة.</div>
+        )}
+        {error && <div className="text-sm text-red-600 bg-red-50 border border-red-100 rounded-lg px-3 py-2">{error}</div>}
+        <div className="flex gap-2 pt-1">
+          <Button type="submit" disabled={loading || !modelId || availableModels.length === 0}>
+            {loading ? <Loader2 className="w-4 h-4 animate-spin" /> : <Plus className="w-4 h-4" />} إضافة
+          </Button>
+          <Button type="button" variant="secondary" onClick={onClose}>إلغاء</Button>
+        </div>
+      </form>
+    </Modal>
   );
 }

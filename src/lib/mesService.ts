@@ -211,6 +211,30 @@ export async function deleteMonthlyPlanItem(id: string): Promise<void> {
   if (error) throw error;
 }
 
+export async function addMonthlyPlanItem(fields: {
+  monthly_plan_id: string;
+  product_model_id: string;
+  sequence_order: number;
+  planned_quantity: number;
+  unit_of_measure?: string;
+  planned_start_date?: string | null;
+  planned_end_date?: string | null;
+  notes?: string;
+}): Promise<void> {
+  const { error } = await supabase.from('monthly_plan_items').insert({
+    monthly_plan_id: fields.monthly_plan_id,
+    product_model_id: fields.product_model_id,
+    sequence_order: fields.sequence_order,
+    planned_quantity: fields.planned_quantity,
+    unit_of_measure: fields.unit_of_measure ?? 'PCS',
+    planned_start_date: fields.planned_start_date ?? null,
+    planned_end_date: fields.planned_end_date ?? null,
+    notes: fields.notes ?? null,
+    status: 'PENDING',
+  });
+  if (error) throw error;
+}
+
 export async function generateWorkOrderForMonthlyItem(monthlyPlanItemId: string): Promise<string> {
   const { data: { user } } = await supabase.auth.getUser();
   const { data, error } = await supabase.rpc('auto_create_work_order_from_monthly_item', {
